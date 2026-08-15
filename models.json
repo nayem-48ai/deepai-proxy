@@ -18,6 +18,19 @@
         { "id": "llama-4-scout", "label": "Llama 4 Scout", "free": true, "tokenizer": "llama", "context_length": 1000000, "input_modalities": ["text", "image"], "output_modalities": ["text"], "note": "Meta multimodal" }
       ]
     },
+    "reasoning": {
+      "label": "Reasoning Models (think before answering)",
+      "description": "These DeepAI models expose native 'thinking' (reasoning_content). Set DEEPAI_COOKIE (your deepai.org session, see docs) to activate real thinking; otherwise use ':reason' suffix for a synthesized plan. Some require a DeepAI Pro session.",
+      "models": [
+        { "id": "gpt-oss-120b", "label": "GPT OSS 120B (thinking)", "free": true, "recommended": true, "tokenizer": "gpt-oss", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "OpenAI open-weights, native thinking — recommended" },
+        { "id": "deepseek-reasoner", "label": "DeepSeek Reasoner", "free": true, "tokenizer": "deepseek", "context_length": 64000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "DeepSeek reasoning model" },
+        { "id": "deepseek-r1-distill-llama-70b", "label": "DeepSeek R1 Distill 70B", "free": true, "tokenizer": "deepseek", "context_length": 64000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "R1-distilled Llama" },
+        { "id": "qwen3-235b-a22b-thinking", "label": "Qwen3 235B Thinking", "free": true, "tokenizer": "qwen", "context_length": 64000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Qwen thinking model" },
+        { "id": "o4-mini", "label": "OpenAI o4-mini (thinking)", "free": true, "tokenizer": "gpt", "context_length": 200000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Reasoning model (Pro session)" },
+        { "id": "o3", "label": "OpenAI o3 (thinking)", "free": true, "tokenizer": "gpt", "context_length": 200000, "input_modalities": ["text", "image"], "output_modalities": ["text"], "note": "Reasoning model (Pro session)" },
+        { "id": "gpt-5", "label": "GPT-5 (thinking)", "free": true, "tokenizer": "gpt-5", "context_length": 200000, "input_modalities": ["text", "image"], "output_modalities": ["text"], "note": "Reasoning model (Pro session)" }
+      ]
+    },
     "web": {
       "label": "Web Search",
       "description": "Live web access with cited sources (free on DeepAI).",

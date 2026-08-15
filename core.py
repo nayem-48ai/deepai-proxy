@@ -145,19 +145,93 @@ def _img_cookie():
     did = os.environ.get("DEEPAI_DEVICE_ID")
     return f"deepai_device_id={did}" if did else ""
 
-def stream_chat(model, messages, images=None, files=None):
-    chat_history = json.dumps(messages)
+# Native DeepAI "thinking" (web-UI parity) requires a logged-in session cookie,
+# because the web UI sends credentials:'include'. Set DEEPAI_COOKIE to your
+# deepai.org session cookie (from browser devtools) to enable real thinking.
+DEEPAI_COOKIE = os.environ.get("DEEPAI_COOKIE", "")
+DEEPAI_TASK = "https://api.deepai.org/check_chat_task_status"
+# Models that expose DeepAI's native thinking task flow (from the web UI source).
+THINKING_MODELS = {
+    "supergenius", "o4-mini", "o3", "gpt-oss-120b", "gemini-3-pro-preview",
+    "claude-opus-5", "claude-fable-5", "grok-4.3", "gpt-5.2", "gpt-5.6-sol",
+    "gpt-5", "grok-3-mini", "deepseek-reasoner", "deepseek-r1-distill-llama-70b",
+    "qwen3-235b-a22b-thinking",
+}
+
+def _build_chat_parts(model, messages, images, files, thinking):
     parts = [
-        ("text", "chat_style", "chat"), ("text", "model", model), ("text", "chatHistory", chat_history),
-        ("text", "session_uuid", str(uuid.uuid4())), ("text", "tool_activity_support", "1"),
-        ("text", "hacker_is_stinky", "very_stinky"), ("text", "enabled_tools", json.dumps(["image_generator", "image_editor"])),
+        ("text", "chat_style", "chat"),
+        ("text", "chat_model" if thinking else "model", model),
+        ("text", "chatHistory", json.dumps(messages)),
+        ("text", "session_uuid", str(uuid.uuid4())),
+        ("text", "tool_activity_support", "1"),
+        ("text", "enabled_tools", json.dumps(["image_generator", "image_editor"])),
     ]
-    had_attach = bool(images or files)
+    if thinking:
+        parts.append(("text", "thinking_support", "1"))
+    else:
+        parts.append(("text", "hacker_is_stinky", "very_stinky"))
     for p in _image_parts(images or []):
         parts.append(p)
-    fp = _file_part((files or [None])[0]) if files else None
-    if fp:
-        parts.append(fp)
+    if files:
+        fp = _file_part(files[0])
+        if fp:
+            parts.append(fp)
+    return parts
+
+def _think_stream(model, messages, images=None, files=None):
+    # Native DeepAI thinking: POST -> task_id, then poll thinking_text/answer_text.
+    try:
+        parts = _build_chat_parts(model, messages, images, files, True)
+        boundary, body = _build_multipart(parts)
+        req = urllib.request.Request(DEEPAI_CHAT, data=body, headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": UA, "api-key": make_tryit_key(), "Cookie": DEEPAI_COOKIE,
+        }, method="POST")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+    except Exception:
+        yield from stream_chat(model, messages, images, files, thinking=False)
+        return
+    try:
+        td = json.loads(raw)
+    except Exception:
+        if raw.strip():
+            yield {"reasoning": "", "content": raw}
+        return
+    task_id = td.get("task_id")
+    if not task_id:
+        if raw.strip():
+            yield {"reasoning": "", "content": raw}
+        return
+    last_t, last_a = "", ""
+    for _ in range(150):
+        try:
+            d = json.loads(urllib.request.urlopen(urllib.request.Request(
+                f"{DEEPAI_TASK}?type=thinking-task&task_id={task_id}",
+                headers={"User-Agent": UA, "api-key": make_tryit_key(), "Cookie": DEEPAI_COOKIE},
+            ), timeout=30).read().decode("utf-8", "replace"))
+        except Exception:
+            break
+        t = d.get("thinking_text") or ""
+        if len(t) > len(last_t):
+            yield {"reasoning": t[len(last_t):], "content": ""}
+            last_t = t
+        a = d.get("answer_text") or ""
+        if len(a) > len(last_a):
+            yield {"reasoning": "", "content": a[len(last_a):]}
+            last_a = a
+        if a or d.get("status") in ("COMPLETED", "FAILED"):
+            break
+        time.sleep(1.0)
+
+def stream_chat(model, messages, images=None, files=None, thinking=False):
+    if thinking and DEEPAI_COOKIE and model in THINKING_MODELS:
+        yield from _think_stream(model, messages, images, files)
+        return
+    chat_history = json.dumps(messages)
+    parts = _build_chat_parts(model, messages, images, files, False)
+    had_attach = bool(images or files)
     boundary, body = _build_multipart(parts)
     req = urllib.request.Request(DEEPAI_CHAT, data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA}, method="POST")
@@ -177,15 +251,24 @@ def stream_chat(model, messages, images=None, files=None):
                     visible, buf = buf, ""
                 visible = record_re.sub("", visible)
                 if visible:
-                    yield visible
+                    yield {"reasoning": "", "content": visible}
     except urllib.error.HTTPError:
         if had_attach:
-            yield from stream_chat(model, messages)
+            yield from stream_chat(model, messages, images, files, thinking=False)
             return
         raise
 
-def chat_once(model, messages, images=None, files=None):
-    return "".join(stream_chat(model, messages, images, files))
+def chat_once(model, messages, images=None, files=None, thinking=False):
+    return "".join(d["content"] for d in stream_chat(model, messages, images, files, thinking))
+
+def chat_full(model, messages, images=None, files=None, thinking=False):
+    r, c = [], []
+    for d in stream_chat(model, messages, images, files, thinking):
+        if d["reasoning"]:
+            r.append(d["reasoning"])
+        if d["content"]:
+            c.append(d["content"])
+    return "".join(r), "".join(c)
 
 # ---------------- reasoning (professional-provider parity) ----------------
 # DeepAI's free chat models do not expose a separate reasoning channel, so we
@@ -223,14 +306,14 @@ def _stream_reasoned(model, messages, images=None, files=None):
                              "(reasoning only). Do NOT write the final deliverable/code yet."}] + list(messages)
     plan = []
     for d in stream_chat(model, plan_msgs, images, files):
-        plan.append(d)
-        yield {"reasoning": d, "content": ""}
+        plan.append(d["content"])
+        yield {"reasoning": d["content"], "content": ""}
     exec_msgs = list(messages) + [
         {"role": "assistant", "content": "Plan:\n" + "".join(plan)},
         {"role": "user", "content": "Now execute that plan and provide the final answer / deliverable."},
     ]
     for d in stream_chat(model, exec_msgs, images, files):
-        yield {"reasoning": "", "content": d}
+        yield {"reasoning": "", "content": d["content"]}
 
 # ---------------- DeepAI images ----------------
 def call_image(endpoint, fields):
@@ -449,15 +532,20 @@ def handle_request(method, path, headers, body_bytes):
             def gen():
                 yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk",
                                               "model": model, "choices": [{"index": 0, "delta": {"role": "assistant"}}]}).encode() + b"\n\n"
-                if want_reason:
+                if DEEPAI_COOKIE and real_model in THINKING_MODELS:
+                    for d in stream_chat(real_model, messages, images, files, thinking=True):
+                        yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d["content"], "reasoning_content": d["reasoning"]}}]}).encode() + b"\n\n"
+                elif want_reason:
                     for d in _stream_reasoned(real_model, messages, images, files):
                         yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d["content"], "reasoning_content": d["reasoning"]}}]}).encode() + b"\n\n"
                 else:
                     for d in stream_chat(real_model, messages, images, files):
-                        yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d, "reasoning_content": ""}}]}).encode() + b"\n\n"
+                        yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d["content"], "reasoning_content": ""}}]}).encode() + b"\n\n"
                 yield b"data: [DONE]\n\n"
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
-        if want_reason:
+        if DEEPAI_COOKIE and real_model in THINKING_MODELS:
+            reasoning, content = chat_full(real_model, messages, images, files, thinking=True)
+        elif want_reason:
             reasoning, content = _reasoned_answer(real_model, messages, images, files)
         else:
             text = chat_once(real_model, messages, images, files)
@@ -481,7 +569,13 @@ def handle_request(method, path, headers, body_bytes):
             def gen():
                 yield _sse("response.created", {"id": rid, "object": "response", "status": "in_progress"})
                 yield _sse("response.output_item.added", {"item": {"id": iid, "type": "message", "role": "assistant", "content": []}})
-                if want_reason:
+                if DEEPAI_COOKIE and real_model in THINKING_MODELS:
+                    for d in stream_chat(real_model, messages, images, files, thinking=True):
+                        if d["reasoning"]:
+                            yield _sse("response.output_text.delta", {"item_id": iid, "delta": "", "reasoning": d["reasoning"]})
+                        else:
+                            yield _sse("response.output_text.delta", {"item_id": iid, "delta": d["content"]})
+                elif want_reason:
                     for d in _stream_reasoned(real_model, messages, images, files):
                         if d["reasoning"]:
                             yield _sse("response.output_text.delta", {"item_id": iid, "delta": "", "reasoning": d["reasoning"]})
@@ -489,12 +583,14 @@ def handle_request(method, path, headers, body_bytes):
                             yield _sse("response.output_text.delta", {"item_id": iid, "delta": d["content"]})
                 else:
                     for d in stream_chat(real_model, messages, images, files):
-                        yield _sse("response.output_text.delta", {"item_id": iid, "delta": d})
+                        yield _sse("response.output_text.delta", {"item_id": iid, "delta": d["content"]})
                 yield _sse("response.output_text.done", {"item_id": iid})
                 yield _sse("response.output_item.done", {"item": {"id": iid, "type": "message", "role": "assistant"}})
                 yield _sse("response.completed", {"id": rid, "status": "completed"})
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
-        if want_reason:
+        if DEEPAI_COOKIE and real_model in THINKING_MODELS:
+            reasoning, content = chat_full(real_model, messages, images, files, thinking=True)
+        elif want_reason:
             reasoning, content = _reasoned_answer(real_model, messages, images, files)
         else:
             text = chat_once(real_model, messages, images, files)
