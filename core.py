@@ -288,6 +288,121 @@ def _split_reason_model(model):
         return model[:-6], True
     return model, False
 
+# ---------------- Tool / function-calling shim ----------------
+# DeepAI's chat API has no native tool support, so OpenCode's agent (which
+# relies on the model emitting tool_calls to use Write/Bash/etc.) cannot act.
+# We translate tools into a strict plain-text contract the model can follow,
+# then parse its reply back into OpenAI-style tool_calls.
+_TOOL_GUARD = (
+    "You are a coding agent with tools (functions). When you must take an action "
+    "(write/edit a file, run a command, read a file, search, etc.), call EXACTLY ONE "
+    "tool by outputting a single line in this exact format and NOTHING else:\n"
+    "TOOLCALL:{\"name\":\"<tool_name>\",\"arguments\":{...valid json...}}\n"
+    "Rules: valid JSON only; no code fences; no extra text when calling a tool. "
+    "If you do NOT need a tool, reply with your normal answer instead."
+)
+
+def _tool_list_text(tools):
+    lines = []
+    for t in tools or []:
+        fn = t.get("function", {}) if isinstance(t, dict) else t
+        lines.append("- %s: %s\n  params: %s" % (
+            fn.get("name", "?"), fn.get("description", ""),
+            json.dumps(fn.get("parameters", {}))))
+    return "Available tools:\n" + "\n".join(lines) if lines else ""
+
+def _to_deepai_tool_messages(messages, tools, system):
+    sys_parts = []
+    for m in messages:
+        if m.get("role") == "system":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+            if c:
+                sys_parts.append(c)
+    base_sys = "\n\n".join(sys_parts)
+    out = [{"role": "system", "content": (base_sys + "\n\n" + system if base_sys else system) + "\n\n" + _tool_list_text(tools)}]
+    for m in messages:
+        r = m.get("role")
+        if r == "system":
+            continue
+        if r == "user":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text")
+            out.append({"role": "user", "content": c or ""})
+        elif r == "assistant":
+            if m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    fn = tc.get("function", {})
+                    out.append({"role": "assistant", "content": 'TOOLCALL:{"name":%s,"arguments":%s}' % (
+                        json.dumps(fn.get("name", "")), json.dumps(fn.get("arguments", {})))})
+            elif m.get("content"):
+                out.append({"role": "assistant", "content": m["content"]})
+        elif r == "tool":
+            out.append({"role": "user", "content": "TOOL RESULT for %s:\n%s" % (
+                m.get("name", ""), m.get("content", ""))})
+    return out
+
+def _parse_toolcall(text):
+    if not text:
+        return None
+    def _extract_balanced(s, start):
+        # s[start] == '{'; return (obj_str, end_index) for the balanced brace
+        depth = 0
+        for i in range(start, len(s)):
+            if s[i] == "{":
+                depth += 1
+            elif s[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return s[start:i + 1], i + 1
+        return None, len(s)
+    def _try_obj(obj_str):
+        try:
+            obj = json.loads(obj_str)
+        except Exception:
+            return None
+        name = obj.get("name") or obj.get("function", {}).get("name")
+        args = obj.get("arguments", obj.get("parameters", {}))
+        if name:
+            return name, args if isinstance(args, dict) else {}
+        return None
+    # primary: TOOLCALL:{...}  (balanced braces, handles nested args)
+    idx = text.find("TOOLCALL:")
+    if idx != -1:
+        brace = text.find("{", idx)
+        if brace != -1:
+            obj_str, _ = _extract_balanced(text, brace)
+            if obj_str:
+                res = _try_obj(obj_str)
+                if res:
+                    return res
+    # fallback: fenced json block with name+arguments
+    m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if m:
+        res = _try_obj(m.group(1))
+        if res:
+            return res
+    return None
+
+def _toolcall_response(name, args, model, stream):
+    call_id = "call_" + uuid.uuid4().hex[:16]
+    fn = {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}
+    if stream:
+        def gen():
+            yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk",
+                "model": model, "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": fn}]}}]}).encode() + b"\n\n"
+            yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}).encode() + b"\n\n"
+            yield b"data: [DONE]\n\n"
+        return gen()
+    return {
+        "id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion", "model": model,
+        "choices": [{"index": 0, "finish_reason": "tool_calls",
+            "message": {"role": "assistant", "content": None,
+                        "tool_calls": [{"id": call_id, "type": "function", "function": fn}]}}]
+    }
+
 def _reasoned_answer(model, messages, images=None, files=None):
     plan_msgs = [{"role": "system",
                   "content": "You are a meticulous senior engineer. Output a concise step-by-step plan "
@@ -534,6 +649,29 @@ def handle_request(method, path, headers, body_bytes):
         messages = _messages_from(body)
         images = body.get("images") or None
         files = body.get("files") or None
+        # Tool-calling shim: DeepAI has no native tools, so we translate to a
+        # plain-text contract and parse the reply back into tool_calls.
+        tools = body.get("tools")
+        if tools:
+            di_msgs = _to_deepai_tool_messages(messages, tools, _TOOL_GUARD)
+            try:
+                text = chat_once(real_model, di_msgs, None, None)
+            except urllib.error.HTTPError as e:
+                return respond(502, {"Content-Type": "application/json"}, json.dumps({"error": "upstream model error: " + _upstream_err(e)}).encode())
+            tc = _parse_toolcall(text)
+            if tc:
+                if body.get("stream"):
+                    return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, _toolcall_response(tc[0], tc[1], model, True))
+                return respond(200, {"Content-Type": "application/json"}, json.dumps(_toolcall_response(tc[0], tc[1], model, False)).encode())
+            # no tool call -> return the text as a normal answer
+            if body.get("stream"):
+                return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+                               (b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk", "model": model,
+                                   "choices": [{"index": 0, "delta": {"role": "assistant", "content": text, "reasoning_content": ""}}]}).encode() + b"\n\n" + b"data: [DONE]\n\n"))
+            return respond(200, {"Content-Type": "application/json"}, json.dumps({
+                "id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion", "model": model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": text, "reasoning_content": ""}, "finish_reason": "stop"}]
+            }).encode())
         if body.get("stream"):
             def gen():
                 yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk",
