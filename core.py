@@ -532,10 +532,11 @@ def handle_request(method, path, headers, body_bytes):
             def gen():
                 yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk",
                                               "model": model, "choices": [{"index": 0, "delta": {"role": "assistant"}}]}).encode() + b"\n\n"
+                # reasoning models think by default (native when cookie set, else two-pass synthesis)
                 if DEEPAI_COOKIE and real_model in THINKING_MODELS:
                     for d in stream_chat(real_model, messages, images, files, thinking=True):
                         yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d["content"], "reasoning_content": d["reasoning"]}}]}).encode() + b"\n\n"
-                elif want_reason:
+                elif want_reason or real_model in THINKING_MODELS:
                     for d in _stream_reasoned(real_model, messages, images, files):
                         yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d["content"], "reasoning_content": d["reasoning"]}}]}).encode() + b"\n\n"
                 else:
@@ -545,7 +546,7 @@ def handle_request(method, path, headers, body_bytes):
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
         if DEEPAI_COOKIE and real_model in THINKING_MODELS:
             reasoning, content = chat_full(real_model, messages, images, files, thinking=True)
-        elif want_reason:
+        elif want_reason or real_model in THINKING_MODELS:
             reasoning, content = _reasoned_answer(real_model, messages, images, files)
         else:
             text = chat_once(real_model, messages, images, files)
@@ -575,7 +576,7 @@ def handle_request(method, path, headers, body_bytes):
                             yield _sse("response.output_text.delta", {"item_id": iid, "delta": "", "reasoning": d["reasoning"]})
                         else:
                             yield _sse("response.output_text.delta", {"item_id": iid, "delta": d["content"]})
-                elif want_reason:
+                elif want_reason or real_model in THINKING_MODELS:
                     for d in _stream_reasoned(real_model, messages, images, files):
                         if d["reasoning"]:
                             yield _sse("response.output_text.delta", {"item_id": iid, "delta": "", "reasoning": d["reasoning"]})
@@ -590,7 +591,7 @@ def handle_request(method, path, headers, body_bytes):
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
         if DEEPAI_COOKIE and real_model in THINKING_MODELS:
             reasoning, content = chat_full(real_model, messages, images, files, thinking=True)
-        elif want_reason:
+        elif want_reason or real_model in THINKING_MODELS:
             reasoning, content = _reasoned_answer(real_model, messages, images, files)
         else:
             text = chat_once(real_model, messages, images, files)
