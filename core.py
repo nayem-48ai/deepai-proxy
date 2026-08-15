@@ -302,6 +302,10 @@ def _sse(event, data):
 def handle_request(method, path, headers, body_bytes):
     method = method.upper()
     raw = path.split("?")[0]
+    # The OpenAI SDK builds URLs by concatenating baseURL + path, so a trailing-slash
+    # base URL (e.g. ".../api/v1/") produces ".../api/v1//models" (double slash).
+    # Collapse repeated slashes so these still resolve.
+    raw = re.sub(r"/{2,}", "/", raw)
     is_v1 = raw.startswith("/api/v1")
     path = raw
     if is_v1:
@@ -328,6 +332,16 @@ def handle_request(method, path, headers, body_bytes):
 
     # models (public)
     if path == "/api/models" and method == "GET":
+        if is_v1:
+            # Minimal canonical OpenAI /v1/models shape (matches NVIDIA/OpenAI so
+            # generic OpenAI clients / n8n load models dynamically).
+            data = [{"id": m["id"], "object": "model", "created": 1700000000, "owned_by": "deepai"}
+                    for cat in load_models()["categories"].values() for m in cat["models"]]
+            return respond(200, {"Content-Type": "application/json"}, json.dumps({"object": "list", "data": data}).encode())
+        return respond(200, {"Content-Type": "application/json"}, json.dumps(load_models()).encode())
+
+    # rich models (our UI) — OpenRouter-style extended metadata
+    if path == "/api/models/full" and method == "GET":
         if is_v1:
             return respond(200, {"Content-Type": "application/json"}, json.dumps(openrouter_models()).encode())
         return respond(200, {"Content-Type": "application/json"}, json.dumps(load_models()).encode())

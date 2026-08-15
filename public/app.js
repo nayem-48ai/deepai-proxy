@@ -45,7 +45,7 @@ async function tryitKey() {
 /* ---------- models ---------- */
 async function loadModels() {
   try {
-    const r = await fetch(BASE + "/api/v1/models");
+    const r = await fetch(BASE + "/api/v1/models/full");
     const j = await r.json();
     state.models = j.data || [];
     const sel = $("#modelSelect");
