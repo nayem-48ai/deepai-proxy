@@ -8,6 +8,7 @@ let API_KEY = localStorage.getItem(LS_KEY) || "";
 let conversations = loadConv();
 let activeId = conversations[0] ? conversations[0].id : null;
 let imgMode = false;
+let attachments = []; // {kind:'image'|'audio'|'file', name, dataUrl}
 let modelList = [];
 
 // ---------- key bootstrap ----------
@@ -64,6 +65,24 @@ function renderSidebar() {
 
 // ---------- chat render ----------
 function esc(s) { return (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function attHTML(atts) {
+  return atts.map((a) => {
+    if (a.kind === "image") return `<div class="att-chip"><img src="${a.dataUrl}"><span class="nm">${esc(a.name)}</span></div>`;
+    if (a.kind === "audio") return `<div class="att-chip"><audio controls src="${a.dataUrl}"></audio></div>`;
+    return `<div class="att-chip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><a class="nm" href="${a.dataUrl}" download="${esc(a.name)}">${esc(a.name)}</a></div>`;
+  }).join("");
+}
+function renderAttRow() {
+  const row = $("#attRow");
+  row.innerHTML = attachments.map((a, i) => {
+    let inner;
+    if (a.kind === "image") inner = `<img src="${a.dataUrl}">`;
+    else if (a.kind === "audio") inner = `<audio controls src="${a.dataUrl}"></audio>`;
+    else inner = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="nm">${esc(a.name)}</span>`;
+    return `<div class="att-chip">${inner}<button class="x" data-i="${i}">×</button></div>`;
+  }).join("");
+  row.querySelectorAll(".x").forEach((b) => b.addEventListener("click", () => { attachments.splice(+b.dataset.i, 1); renderAttRow(); }));
+}
 function makeMsgEl(m, idx) {
   const wrap = document.createElement("div");
   wrap.className = "msg " + m.role;
@@ -91,7 +110,13 @@ function makeMsgEl(m, idx) {
       bubble.textContent = m.content || "Generating…";
     }
   } else {
-    bubble.textContent = m.content || "";
+    if (m.content) bubble.textContent = m.content;
+    if (m.attachments && m.attachments.length) {
+      const ad = document.createElement("div");
+      ad.style.marginTop = m.content ? "8px" : "0";
+      ad.innerHTML = attHTML(m.attachments);
+      bubble.appendChild(ad);
+    }
   }
   wrap.appendChild(acts); wrap.appendChild(bubble);
   return wrap;
@@ -115,7 +140,7 @@ function renderChat() {
 function getApiMessages(conv) {
   return conv.messages.filter((m) => !(m.role === "assistant" && m.content === ""));
 }
-async function streamAssistant(conv) {
+async function streamAssistant(conv, images, files) {
   const msg = { role: "assistant", content: "" };
   conv.messages.push(msg);
   const inner = $("#chatScroll .chat-inner") || (() => { renderChat(); return $("#chatScroll .chat-inner"); })();
@@ -123,7 +148,10 @@ async function streamAssistant(conv) {
   inner.appendChild(el);
   const bubble = el.querySelector(".bubble");
   $("#chatScroll").scrollTop = $("#chatScroll").scrollHeight;
-  const r = await fetch("/api/v1/chat/completions", { method: "POST", headers: AUTH(), body: JSON.stringify({ model: conv.model, messages: getApiMessages(conv).slice(0, -1), stream: true }) });
+  const body = { model: conv.model, messages: getApiMessages(conv).slice(0, -1), stream: true };
+  if (images && images.length) body.images = images;
+  if (files && files.length) body.files = files;
+  const r = await fetch("/api/v1/chat/completions", { method: "POST", headers: AUTH(), body: JSON.stringify(body) });
   const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "", full = "";
   while (true) {
     const { done, value } = await reader.read(); if (done) break;
@@ -138,18 +166,22 @@ async function streamAssistant(conv) {
   msg.content = full; conv.updatedAt = Date.now(); saveConv(); renderSidebar();
 }
 async function send() {
-  const text = $("#msgInput").value.trim(); if (!text) return;
+  const text = $("#msgInput").value.trim(); if (!text && !attachments.length) return;
   const conv = activeConv(); if (!conv) return;
-  if (imgMode) { $("#msgInput").value = ""; return generateInlineImage(text); }
-  conv.messages.push({ role: "user", content: text });
-  if (conv.messages.length === 1) { conv.title = text.slice(0, 42); $("#convTitle").textContent = conv.title; }
-  $("#msgInput").value = "";
+  if (imgMode) { const t = text; $("#msgInput").value = ""; return generateInlineImage(t); }
+  const atts = attachments.map((a) => ({ kind: a.kind, name: a.name, dataUrl: a.dataUrl }));
+  const images = attachments.filter((a) => a.kind === "image").map((a) => a.dataUrl);
+  const files = attachments.filter((a) => a.kind !== "image").map((a) => a.dataUrl);
+  conv.messages.push({ role: "user", content: text, attachments: atts });
+  if (conv.messages.length === 1 && text) { conv.title = text.slice(0, 42); $("#convTitle").textContent = conv.title; }
+  $("#msgInput").value = ""; attachments = []; renderAttRow();
   renderChat(); saveConv(); renderSidebar();
-  await streamAssistant(conv);
+  await streamAssistant(conv, images, files);
 }
 async function generateInlineImage(prompt) {
   const conv = activeConv();
   const m = { role: "image", content: prompt, url: null };
+  attachments = []; renderAttRow();
   conv.messages.push(m); renderChat(); saveConv();
   try {
     const r = await fetch("/api/v1/images/generations", { method: "POST", headers: AUTH(), body: JSON.stringify({ prompt, size: "640x640" }) });
@@ -193,6 +225,19 @@ if (localStorage.getItem("theme") === "dark") document.documentElement.setAttrib
 // ---------- composer ----------
 $("#sendBtn").addEventListener("click", send);
 $("#msgInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("#attachBtn").addEventListener("click", () => $("#fileInput").click());
+$("#fileInput").addEventListener("change", (e) => {
+  for (const f of e.target.files) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const kind = f.type.startsWith("image/") ? "image" : f.type.startsWith("audio/") ? "audio" : "file";
+      attachments.push({ kind, name: f.name, dataUrl: reader.result });
+      renderAttRow();
+    };
+    reader.readAsDataURL(f);
+  }
+  e.target.value = "";
+});
 $("#newChat").addEventListener("click", newChat);
 $("#undoBtn").addEventListener("click", undoLast);
 $("#retryBtn").addEventListener("click", () => retryFrom((activeConv()?.messages.length || 1) - 1));

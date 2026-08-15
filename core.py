@@ -4,7 +4,7 @@ Serves both a local stdlib server (server.py) and Vercel Python (api/index.py)
 through handle_request(method, path, headers, body) -> (status, headers, body).
 
 API surface (OpenAI / OpenRouter compatible):
-  POST /api/v1/chat/completions   OpenAI chat completions (stream + non-stream)
+  POST /api/v1/chat/completions   OpenAI chat completions (stream + non-stream, multimodal)
   POST /api/v1/responses          Codex Responses API
   GET  /api/v1/models             OpenRouter-style model list
   POST /api/v1/images/generations
@@ -86,7 +86,7 @@ def make_tryit_key():
     inner = _h(UA + r + "hackers_become_a_little_stinkier_every_time_they_hack")
     return "tryit-" + r + "-" + _h(UA + _h(UA + inner))
 
-# ---------------- DeepAI chat ----------------
+# ---------------- multipart builders ----------------
 def _multipart(fields):
     boundary = "----deepaiproxy" + uuid.uuid4().hex
     body = "".join(
@@ -95,48 +95,101 @@ def _multipart(fields):
     ).encode() + f"--{boundary}--\r\n".encode()
     return boundary, body
 
+def _build_multipart(parts):
+    """parts: ('text', name, value) | ('file', name, filename, bytes, ctype)."""
+    boundary = "----deepaiproxy" + uuid.uuid4().hex
+    body = b""
+    for p in parts:
+        if p[0] == "text":
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{p[1]}\"\r\n\r\n{p[2]}\r\n".encode()
+        else:
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{p[1]}\"; filename=\"{p[2]}\"\r\n"
+                     f"Content-Type: {p[4]}\r\n\r\n").encode() + p[3] + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
+    return boundary, body
+
+def _image_parts(images):
+    """DeepAI image fields (image/image2/image3) from data URLs or http URLs."""
+    out = []
+    for img, nm in zip(images, ["image", "image2", "image3"]):
+        if img.startswith("data:"):
+            try:
+                hdr, b64 = img.split(",", 1)
+                ctype = hdr.split(":", 1)[1].split(";", 1)[0] if ":" in hdr else "image/png"
+                out.append(("file", nm, "img.png", base64.b64decode(b64), ctype))
+            except Exception:
+                pass
+        elif img.startswith("http"):
+            out.append(("text", nm, img))
+    return out
+
+def _file_part(data_url, name="file"):
+    try:
+        hdr, b64 = data_url.split(",", 1)
+        ctype = hdr.split(":", 1)[1].split(";", 1)[0] if ":" in hdr else "application/octet-stream"
+        return ("file", name, "file.bin", base64.b64decode(b64), ctype)
+    except Exception:
+        return None
+
+# ---------------- DeepAI chat (multimodal-aware) ----------------
 def _img_cookie():
     if os.environ.get("DEEPAI_COOKIE"):
         return os.environ["DEEPAI_COOKIE"]
     did = os.environ.get("DEEPAI_DEVICE_ID")
     return f"deepai_device_id={did}" if did else ""
 
-def stream_chat(model, messages):
-    """Yield text deltas from DeepAI's anonymous chat endpoint."""
+def stream_chat(model, messages, images=None, files=None):
+    """Yield text deltas from DeepAI's anonymous chat endpoint.
+    images/files are forwarded when present; on error we fall back to text-only
+    so chat never breaks for models that don't accept attachments."""
     chat_history = json.dumps(messages)
-    boundary, body = _multipart({
-        "chat_style": "chat",
-        "model": model,
-        "chatHistory": chat_history,
-        "session_uuid": str(uuid.uuid4()),
-        "tool_activity_support": "1",
-        "hacker_is_stinky": "very_stinky",
-        "enabled_tools": json.dumps(["image_generator", "image_editor"]),
-    })
+    parts = [
+        ("text", "chat_style", "chat"),
+        ("text", "model", model),
+        ("text", "chatHistory", chat_history),
+        ("text", "session_uuid", str(uuid.uuid4())),
+        ("text", "tool_activity_support", "1"),
+        ("text", "hacker_is_stinky", "very_stinky"),
+        ("text", "enabled_tools", json.dumps(["image_generator", "image_editor"])),
+    ]
+    had_attach = bool(images or files)
+    for p in _image_parts(images or []):
+        parts.append(p)
+    fp = _file_part((files or [None])[0]) if files else None
+    if fp:
+        parts.append(fp)
+
+    boundary, body = _build_multipart(parts)
     req = urllib.request.Request(
         DEEPAI_CHAT, data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA},
         method="POST",
     )
     record_re = re.compile(r"\x1c\{.*?\}\x1c", re.DOTALL)
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        buf = ""
-        while True:
-            chunk = resp.read(1024)
-            if not chunk:
-                break
-            buf += chunk.decode("utf-8", "replace")
-            last = buf.rfind("\x1c")
-            if last != -1 and buf[last:].count("\x1c") == 1:
-                visible, buf = buf[:last], buf[last:]
-            else:
-                visible, buf = buf, ""
-            visible = record_re.sub("", visible)
-            if visible:
-                yield visible
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            buf = ""
+            while True:
+                chunk = resp.read(1024)
+                if not chunk:
+                    break
+                buf += chunk.decode("utf-8", "replace")
+                last = buf.rfind("\x1c")
+                if last != -1 and buf[last:].count("\x1c") == 1:
+                    visible, buf = buf[:last], buf[last:]
+                else:
+                    visible, buf = buf, ""
+                visible = record_re.sub("", visible)
+                if visible:
+                    yield visible
+    except urllib.error.HTTPError:
+        if had_attach:
+            yield from stream_chat(model, messages)
+            return
+        raise
 
-def chat_once(model, messages):
-    return "".join(stream_chat(model, messages))
+def chat_once(model, messages, images=None, files=None):
+    return "".join(stream_chat(model, messages, images, files))
 
 # ---------------- DeepAI images ----------------
 def call_image(endpoint, fields):
@@ -187,7 +240,7 @@ def call_image_edit_with_blob(blob_bytes, fields):
 
 # ---------------- API keys ----------------
 def _seed_key():
-    return os.environ.get("SEED_API_KEY") or (KEY_PREFIX + uuid.uuid4().hex + uuid.uuid4().hex[:8])
+    return os.environ.get("SEED_API_KEY") or (KEY_PREFIX + os.urandom(12).hex())
 
 def _save_keys(data):
     try:
@@ -199,7 +252,7 @@ def _save_keys(data):
 
 def gen_key(name="key"):
     data = _load_keys()
-    k = KEY_PREFIX + uuid.uuid4().hex + uuid.uuid4().hex[:8]
+    k = KEY_PREFIX + os.urandom(12).hex()
     data["keys"].append({"key": k, "name": name, "created": int(time.time())})
     _save_keys(data)
     if not os.path.exists(KEYS_FILE):
@@ -281,7 +334,6 @@ def handle_request(method, path, headers, body_bytes):
     if method == "OPTIONS":
         return respond(204, {}, b"")
 
-    # static (only for non-/api paths)
     if not path.startswith("/api/"):
         return respond(*_serve_static(path))
 
@@ -306,22 +358,24 @@ def handle_request(method, path, headers, body_bytes):
         return respond(401, {"Content-Type": "application/json"},
                        json.dumps({"error": "Invalid or missing API key. Use: Authorization: Bearer <key>"}).encode())
 
-    # chat completions (OpenAI format) — accepts /api/chat and /api/v1/chat/completions
+    # chat completions (OpenAI format, multimodal)
     if path in ("/api/chat", "/api/chat/completions") and method == "POST":
         body = _json_body(body_bytes)
         model = body.get("model", "standard")
         messages = _messages_from(body)
+        images = body.get("images") or None
+        files = body.get("files") or None
         if body.get("stream"):
             def gen():
                 yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12],
                                               "object": "chat.completion.chunk",
                                               "model": model,
                                               "choices": [{"index": 0, "delta": {"role": "assistant"}}]}).encode() + b"\n\n"
-                for d in stream_chat(model, messages):
+                for d in stream_chat(model, messages, images, files):
                     yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d}}]}).encode() + b"\n\n"
                 yield b"data: [DONE]\n\n"
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
-        text = chat_once(model, messages)
+        text = chat_once(model, messages, images, files)
         return respond(200, {"Content-Type": "application/json"}, json.dumps({
             "id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion", "model": model,
             "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]
@@ -332,19 +386,21 @@ def handle_request(method, path, headers, body_bytes):
         body = _json_body(body_bytes)
         model = body.get("model", "standard")
         messages = _messages_from(body)
+        images = body.get("images") or None
+        files = body.get("files") or None
         rid = "resp_" + uuid.uuid4().hex[:24]
         if body.get("stream"):
             iid = "msg_" + uuid.uuid4().hex[:12]
             def gen():
                 yield _sse("response.created", {"id": rid, "object": "response", "status": "in_progress"})
                 yield _sse("response.output_item.added", {"item": {"id": iid, "type": "message", "role": "assistant", "content": []}})
-                for d in stream_chat(model, messages):
+                for d in stream_chat(model, messages, images, files):
                     yield _sse("response.output_text.delta", {"item_id": iid, "delta": d})
                 yield _sse("response.output_text.done", {"item_id": iid})
                 yield _sse("response.output_item.done", {"item": {"id": iid, "type": "message", "role": "assistant"}})
                 yield _sse("response.completed", {"id": rid, "status": "completed"})
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
-        text = chat_once(model, messages)
+        text = chat_once(model, messages, images, files)
         return respond(200, {"Content-Type": "application/json"}, json.dumps({
             "id": rid, "object": "response", "model": model,
             "output": [{"type": "message", "role": "assistant",

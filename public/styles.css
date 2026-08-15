@@ -85,6 +85,14 @@ button { font-family: inherit; cursor: pointer; }
 .composer { flex-shrink: 0; padding: 14px 20px 18px; background: var(--bg); }
 .composer-inner { max-width: 760px; margin: 0 auto; display: flex; align-items: flex-end; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 8px 10px; box-shadow: var(--shadow); }
 .composer-inner textarea { flex: 1; border: none; background: transparent; resize: none; min-height: 24px; max-height: 180px; padding: 8px 4px; font-size: 14.5px; }
+.att-row { display: flex; flex-wrap: wrap; gap: 8px; max-width: 760px; margin: 0 auto 8px; }
+.att-row:empty { display: none; }
+.att-chip { position: relative; display: flex; align-items: center; gap: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 5px 8px; font-size: 12.5px; color: var(--muted); max-width: 220px; }
+.att-chip img { width: 38px; height: 38px; border-radius: 7px; object-fit: cover; }
+.att-chip audio { height: 30px; max-width: 150px; }
+.att-chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-chip .x { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel); color: var(--muted); display: grid; place-items: center; font-size: 12px; line-height: 1; }
+.att-chip .x:hover { color: var(--danger); }
 .composer-inner textarea:focus { outline: none; }
 .comp-btn, .comp-send { width: 38px; height: 38px; flex-shrink: 0; border-radius: 11px; border: none; display: grid; place-items: center; }
 .comp-btn { background: var(--panel-2); color: var(--muted); }
