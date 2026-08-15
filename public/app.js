@@ -256,7 +256,9 @@ function renderModelsPage() {
     const typ = m.architecture.output_modalities?.includes("image") ? (m.id === "image-editor" ? "edit" : "image") : (m.architecture.modality === "web" ? "web" : "chat");
     const ctx = m.architecture.context_length || "—";
     const inputs = (m.architecture.input_modalities || []).join(", ");
-    tr.innerHTML = `<td><b>${esc(m.name)}</b><br><span class="faint">${m.id}</span></td><td><span class="tag ${typ}">${typ}</span></td><td>${ctx}</td><td class="muted">${esc(m.description || "")}${inputs && typ !== "image" ? "<br><span class='faint'>in: " + inputs + "</span>" : ""}</td><td class="status" data-id="${m.id}">—</td><td><button class="text-btn use" data-id="${m.id}">Use</button></td>`;
+    const rec = m.recommended ? ' <span class="badge public">recommended</span>' : "";
+    const reason = typ === "chat" || typ === "web" ? ` <span class="faint">· add <code>:reason</code> for plan</span>` : "";
+    tr.innerHTML = `<td><b>${esc(m.name)}</b>${rec}<br><span class="faint">${m.id}</span></td><td><span class="tag ${typ}">${typ}</span></td><td>${ctx}</td><td class="muted">${esc(m.description || "")}${inputs && typ !== "image" ? "<br><span class='faint'>in: " + inputs + "</span>" : ""}${reason}</td><td class="status" data-id="${m.id}">—</td><td><button class="text-btn use" data-id="${m.id}">Use</button></td>`;
     tr.querySelector(".use").onclick = () => { $("#modelSelect").value = m.id; state.model = m.id; if (curConv()) curConv().model = m.id; persist(); openPage("chat"); };
     body.appendChild(tr);
   });

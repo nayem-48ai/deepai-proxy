@@ -56,6 +56,7 @@ def openrouter_models():
             data.append({
                 "id": m["id"], "object": "model", "created": 1700000000,
                 "owned_by": "deepai", "name": m["label"], "description": m.get("note", ""),
+                "recommended": m.get("recommended", False),
                 "architecture": {"modality": modality, "input_modalities": in_mod, "output_modalities": out_mod,
                                   "tokenizer": m.get("tokenizer", "deepai"), "context_length": ctx, "instruction_window": ctx},
                 "pricing": {"prompt": "0", "completion": "0", "request": "0", "image": "0", "web_search": "0", "internal_reasoning": "0"},
@@ -185,6 +186,51 @@ def stream_chat(model, messages, images=None, files=None):
 
 def chat_once(model, messages, images=None, files=None):
     return "".join(stream_chat(model, messages, images, files))
+
+# ---------------- reasoning (professional-provider parity) ----------------
+# DeepAI's free chat models do not expose a separate reasoning channel, so we
+# (a) surface any native <think>...</think> blocks as OpenAI-style
+#     reasoning_content, and (b) offer a two-pass ":reason" mode that asks the
+#     model for a plan first, then the answer, so the plan is visible as
+#     reasoning_content (matching providers like the test hcnsec.cn endpoint).
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+def _extract_reasoning(text):
+    blocks = [b.strip() for b in _THINK_RE.findall(text)]
+    reasoning = "\n\n".join(b for b in blocks if b).strip()
+    content = _THINK_RE.sub("", text).strip()
+    return reasoning, content
+
+def _split_reason_model(model):
+    if model.endswith(":reason"):
+        return model[:-6], True
+    return model, False
+
+def _reasoned_answer(model, messages, images=None, files=None):
+    plan_msgs = [{"role": "system",
+                  "content": "You are a meticulous senior engineer. Output a concise step-by-step plan "
+                             "(reasoning only). Do NOT write the final deliverable/code yet."}] + list(messages)
+    plan = chat_once(model, plan_msgs, images, files)
+    exec_msgs = list(messages) + [
+        {"role": "assistant", "content": "Plan:\n" + plan},
+        {"role": "user", "content": "Now execute that plan and provide the final answer / deliverable."},
+    ]
+    answer = chat_once(model, exec_msgs, images, files)
+    return plan.strip(), answer.strip()
+
+def _stream_reasoned(model, messages, images=None, files=None):
+    plan_msgs = [{"role": "system",
+                  "content": "You are a meticulous senior engineer. Output a concise step-by-step plan "
+                             "(reasoning only). Do NOT write the final deliverable/code yet."}] + list(messages)
+    plan = []
+    for d in stream_chat(model, plan_msgs, images, files):
+        plan.append(d)
+        yield {"reasoning": d, "content": ""}
+    exec_msgs = list(messages) + [
+        {"role": "assistant", "content": "Plan:\n" + "".join(plan)},
+        {"role": "user", "content": "Now execute that plan and provide the final answer / deliverable."},
+    ]
+    for d in stream_chat(model, exec_msgs, images, files):
+        yield {"reasoning": "", "content": d}
 
 # ---------------- DeepAI images ----------------
 def call_image(endpoint, fields):
@@ -394,7 +440,8 @@ def handle_request(method, path, headers, body_bytes):
     # chat completions (multimodal)
     if path in ("/api/chat", "/api/chat/completions") and method == "POST":
         body = _json_body(body_bytes)
-        model = body.get("model", "standard")
+        model = body.get("model", "deepseek-v3.2")
+        real_model, want_reason = _split_reason_model(model)
         messages = _messages_from(body)
         images = body.get("images") or None
         files = body.get("files") or None
@@ -402,20 +449,29 @@ def handle_request(method, path, headers, body_bytes):
             def gen():
                 yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk",
                                               "model": model, "choices": [{"index": 0, "delta": {"role": "assistant"}}]}).encode() + b"\n\n"
-                for d in stream_chat(model, messages, images, files):
-                    yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d}}]}).encode() + b"\n\n"
+                if want_reason:
+                    for d in _stream_reasoned(real_model, messages, images, files):
+                        yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d["content"], "reasoning_content": d["reasoning"]}}]}).encode() + b"\n\n"
+                else:
+                    for d in stream_chat(real_model, messages, images, files):
+                        yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d, "reasoning_content": ""}}]}).encode() + b"\n\n"
                 yield b"data: [DONE]\n\n"
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
-        text = chat_once(model, messages, images, files)
+        if want_reason:
+            reasoning, content = _reasoned_answer(real_model, messages, images, files)
+        else:
+            text = chat_once(real_model, messages, images, files)
+            reasoning, content = _extract_reasoning(text)
         return respond(200, {"Content-Type": "application/json"}, json.dumps({
             "id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion", "model": model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content, "reasoning_content": reasoning}, "finish_reason": "stop"}]
         }).encode())
 
     # responses (Codex)
     if path == "/api/responses" and method == "POST":
         body = _json_body(body_bytes)
-        model = body.get("model", "standard")
+        model = body.get("model", "deepseek-v3.2")
+        real_model, want_reason = _split_reason_model(model)
         messages = _messages_from(body)
         images = body.get("images") or None
         files = body.get("files") or None
@@ -425,16 +481,27 @@ def handle_request(method, path, headers, body_bytes):
             def gen():
                 yield _sse("response.created", {"id": rid, "object": "response", "status": "in_progress"})
                 yield _sse("response.output_item.added", {"item": {"id": iid, "type": "message", "role": "assistant", "content": []}})
-                for d in stream_chat(model, messages, images, files):
-                    yield _sse("response.output_text.delta", {"item_id": iid, "delta": d})
+                if want_reason:
+                    for d in _stream_reasoned(real_model, messages, images, files):
+                        if d["reasoning"]:
+                            yield _sse("response.output_text.delta", {"item_id": iid, "delta": "", "reasoning": d["reasoning"]})
+                        else:
+                            yield _sse("response.output_text.delta", {"item_id": iid, "delta": d["content"]})
+                else:
+                    for d in stream_chat(real_model, messages, images, files):
+                        yield _sse("response.output_text.delta", {"item_id": iid, "delta": d})
                 yield _sse("response.output_text.done", {"item_id": iid})
                 yield _sse("response.output_item.done", {"item": {"id": iid, "type": "message", "role": "assistant"}})
                 yield _sse("response.completed", {"id": rid, "status": "completed"})
             return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, gen())
-        text = chat_once(model, messages, images, files)
+        if want_reason:
+            reasoning, content = _reasoned_answer(real_model, messages, images, files)
+        else:
+            text = chat_once(real_model, messages, images, files)
+            reasoning, content = _extract_reasoning(text)
         return respond(200, {"Content-Type": "application/json"}, json.dumps({
             "id": rid, "object": "response", "model": model,
-            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}], "status": "completed"
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": content, "reasoning_content": reasoning}]}], "status": "completed"
         }).encode())
 
     # images
