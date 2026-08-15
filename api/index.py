@@ -1,5 +1,11 @@
 """Vercel Python entry point (WSGI app). Reuses core.handle_request."""
-import os
+import os, sys
+
+# Make the project root importable so `import core` resolves (core.py lives at root).
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
 import core
 
 def app(environ, start_response):
