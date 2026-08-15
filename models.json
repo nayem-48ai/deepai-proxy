@@ -6,31 +6,31 @@
       "label": "Chat Models",
       "description": "Text chat. Works anonymously (no DeepAI key needed).",
       "models": [
-        { "id": "standard", "label": "Standard", "free": true, "note": "Fast & reliable default" },
-        { "id": "deepseek-v3.2", "label": "DeepSeek V3.2", "free": true, "note": "Strong general model, ~128K context" },
-        { "id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite", "free": true, "note": "Cheap, fast" },
-        { "id": "gemma-4", "label": "Gemma 4", "free": true, "note": "Google open model" },
-        { "id": "gpt-4.1-nano", "label": "GPT-4.1 Nano", "free": true, "note": "Small OpenAI model" },
-        { "id": "gpt-oss-120b", "label": "GPT OSS 120B", "free": true, "note": "OpenAI open-weights" },
-        { "id": "gpt-5-nano", "label": "GPT-5 Nano", "free": true, "note": "Tiny GPT-5" },
-        { "id": "llama-3.3-70b-instruct", "label": "Llama 3.3 70B", "free": true, "note": "Meta large model" },
-        { "id": "llama-3.1-8b-instant", "label": "Llama 3.1 8B", "free": true, "note": "Very fast" },
-        { "id": "llama-4-scout", "label": "Llama 4 Scout", "free": true, "note": "Meta multimodal" }
+        { "id": "standard", "label": "Standard", "free": true, "tokenizer": "deepai", "context_length": 32000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Fast & reliable default" },
+        { "id": "deepseek-v3.2", "label": "DeepSeek V3.2", "free": true, "tokenizer": "deepseek", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Strong general model, ~128K context" },
+        { "id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite", "free": true, "tokenizer": "gemini", "context_length": 1000000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Cheap, fast, 1M context" },
+        { "id": "gemma-4", "label": "Gemma 4", "free": true, "tokenizer": "gemma", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Google open model" },
+        { "id": "gpt-4.1-nano", "label": "GPT-4.1 Nano", "free": true, "tokenizer": "gpt", "context_length": 1000000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Small OpenAI model" },
+        { "id": "gpt-oss-120b", "label": "GPT OSS 120B", "free": true, "tokenizer": "gpt-oss", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "OpenAI open-weights" },
+        { "id": "gpt-5-nano", "label": "GPT-5 Nano", "free": true, "tokenizer": "gpt-5", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Tiny GPT-5" },
+        { "id": "llama-3.3-70b-instruct", "label": "Llama 3.3 70B", "free": true, "tokenizer": "llama", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Meta large model" },
+        { "id": "llama-3.1-8b-instant", "label": "Llama 3.1 8B", "free": true, "tokenizer": "llama", "context_length": 128000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Very fast" },
+        { "id": "llama-4-scout", "label": "Llama 4 Scout", "free": true, "tokenizer": "llama", "context_length": 1000000, "input_modalities": ["text", "image"], "output_modalities": ["text"], "note": "Meta multimodal" }
       ]
     },
     "web": {
       "label": "Web Search",
       "description": "Live web access with cited sources (free on DeepAI).",
       "models": [
-        { "id": "online", "label": "Online (Web Search)", "free": true, "note": "Returns current info + sources" }
+        { "id": "online", "label": "Online (Web Search)", "free": true, "tokenizer": "deepai", "context_length": 32000, "input_modalities": ["text"], "output_modalities": ["text"], "note": "Returns current info + sources" }
       ]
     },
     "image": {
       "label": "Image Models",
       "description": "Text-to-image and image-to-image. Requires DEEPAI_DEVICE_ID on the server (your browser cookie).",
       "models": [
-        { "id": "text2img", "label": "Text to Image", "free": true, "type": "image", "note": "Generate from a prompt" },
-        { "id": "image-editor", "label": "Image Editor", "free": true, "type": "image-edit", "note": "Edit an image from a prompt" }
+        { "id": "text2img", "label": "Text to Image", "free": true, "type": "image", "tokenizer": "diffusion", "context_length": 0, "input_modalities": ["text"], "output_modalities": ["image"], "note": "Generate from a prompt" },
+        { "id": "image-editor", "label": "Image Editor", "free": true, "type": "image-edit", "tokenizer": "diffusion", "context_length": 0, "input_modalities": ["text", "image"], "output_modalities": ["image"], "note": "Edit an image from a prompt" }
       ]
     }
   }

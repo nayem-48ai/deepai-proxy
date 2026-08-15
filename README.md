@@ -28,36 +28,40 @@ The site auto-generates an API key on first load and stores it in `localStorage`
 
 ## API
 
-All routes need `Authorization: Bearer <key>` except `GET /api/models`.
+OpenAI / OpenRouter compatible. Base URL: `https://<your-app>/api/v1`. API keys use the
+`tnxbd-` prefix. All routes need `Authorization: Bearer <key>` except `GET /api/v1/models`.
 
 | Method | Path | Body |
 |--------|------|------|
-| POST | `/api/chat` | OpenAI chat completions (`{model, messages, stream}`) |
-| POST | `/api/responses` | Codex Responses API (`{model, input, stream}`) |
-| GET  | `/api/models` | public model registry |
-| POST | `/api/images/generations` | `{prompt, size}` |
-| POST | `/api/images/edits` | `{prompt, image(url or dataURL), size}` |
-| POST | `/api/keys` | `{name}` → new key |
+| POST | `/api/v1/chat/completions` | OpenAI chat completions (`{model, messages, stream}`) |
+| POST | `/api/v1/responses` | Codex Responses API (`{model, input, stream}`) |
+| GET  | `/api/v1/models` | OpenRouter-style model list |
+| POST | `/api/v1/images/generations` | `{prompt, size}` |
+| POST | `/api/v1/images/edits` | `{prompt, image(url or dataURL), size}` |
+| POST | `/api/v1/keys` | `{name}` → new key |
+
+(Legacy `/api/*` aliases still work.)
 
 ### CLI config
 
-- **OpenCode** (`opencode.json`): use the OpenAI-compatible provider with
-  `baseURL: https://<your-app>/api` and `apiKey: <key>`.
-- **Codex** (`config.toml`): `model_providers` with `base_url = "https://<your-app>/api"`
+- **OpenCode** (`opencode.json`): OpenAI-compatible provider with
+  `baseURL: https://<your-app>/api/v1` and `apiKey: tnxbd-…`.
+- **Codex** (`config.toml`): `model_providers` with `base_url = "https://<your-app>/api/v1"`
   and `wire_api = "responses"`, then use model `standard`. (Modern Codex expects the
-  Responses API; this proxy serves both `/api/chat` and `/api/responses`.)
+  Responses API; this proxy serves both `/api/v1/chat/completions` and `/api/v1/responses`.)
 - **Claude Code**: needs an Anthropic→OpenAI adapter (e.g. CC-Adapter) — it speaks the
   Anthropic Messages API, which this proxy does not implement.
 
 ## Deploy to Vercel
 
 ```bash
-vercel env add SEED_API_KEY        # a secret you choose
+vercel env add SEED_API_KEY        # a tnxbd-… secret you choose
 vercel env add DEEPAI_DEVICE_ID    # your deepai cookie id
 vercel deploy
 ```
 
-`vercel.json` routes everything to `api/index.py` (a WSGI app reusing `core.py`).
+`vercel.json` is `{}` (Vercel defaults): `public/` is served as static, `api/index.py`
+is the Python serverless function. No build step, no dependencies.
 
 ## Limitations
 
