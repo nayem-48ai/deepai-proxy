@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DeepAI Proxy — Free Chat & Image API</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <!-- sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>
+        </div>
+        <div class="name">DeepAI Proxy</div>
+      </div>
+      <nav class="nav" id="nav">
+        <a class="nav-item active" data-page="chat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Chat
+        </a>
+        <a class="nav-item" data-page="images">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 20"/></svg>
+          Images
+        </a>
+        <a class="nav-item" data-page="models">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          Models
+        </a>
+        <a class="nav-item" data-page="keys">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3 2 2-2 2-2-2-2 2 2 2z"/></svg>
+          API Keys
+        </a>
+        <a class="nav-item" data-page="docs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          Docs
+        </a>
+      </nav>
+    </aside>
+
+    <!-- main -->
+    <div class="main">
+      <header class="topbar">
+        <h1 id="pageTitle">Chat</h1>
+        <button class="icon-btn" id="themeToggle" title="Toggle theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+        </button>
+      </header>
+
+      <div class="content">
+        <!-- CHAT -->
+        <section class="page active" id="page-chat">
+          <h2 class="section">Chat</h2>
+          <p class="lead">Talk to any free DeepAI model. Streaming, OpenAI-compatible.</p>
+          <div class="card">
+            <label class="field" for="chatModel">Model</label>
+            <select id="chatModel"></select>
+            <div class="chat-box" id="chatBox"></div>
+            <div class="chat-input">
+              <textarea id="chatText" placeholder="Type a message…"></textarea>
+              <button class="btn" id="sendBtn">Send</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- IMAGES -->
+        <section class="page" id="page-images">
+          <h2 class="section">Image Generator & Editor</h2>
+          <p class="lead">Text-to-image and image-to-image (edit). Requires <span class="kbd">DEEPAI_DEVICE_ID</span> on the server.</p>
+          <div class="card">
+            <label class="field" for="imgMode">Mode</label>
+            <select id="imgMode">
+              <option value="text2img">Text to Image</option>
+              <option value="image-editor">Image to Image (edit)</option>
+            </select>
+            <label class="field" for="imgPrompt">Prompt</label>
+            <textarea id="imgPrompt" placeholder="A glowing fox in a forest, cinematic"></textarea>
+            <div id="editOnly" style="display:none">
+              <label class="field" for="imgUrl">Source image URL (or upload)</label>
+              <input id="imgUrl" placeholder="https://… or use the file picker" />
+              <input type="file" id="imgFile" accept="image/*" style="margin-top:8px" />
+            </div>
+            <label class="field" for="imgSize">Size</label>
+            <select id="imgSize">
+              <option>512x512</option><option>640x640</option><option>768x768</option>
+              <option>832x448</option><option>448x832</option>
+            </select>
+            <div class="row" style="margin-top:14px">
+              <button class="btn green" id="genBtn">Generate</button>
+              <span id="imgStatus" class="muted"></span>
+            </div>
+            <div class="img-grid" id="imgGrid"></div>
+          </div>
+        </section>
+
+        <!-- MODELS -->
+        <section class="page" id="page-models">
+          <h2 class="section">Models</h2>
+          <p class="lead">Every free model DeepAI exposes. Use <b>Test</b> to ping one, or <b>Test all</b> to health-check the whole list.</p>
+          <div class="card">
+            <div class="row between wrap" style="margin-bottom:10px">
+              <span class="muted" id="modelCount"></span>
+              <button class="btn sm" id="testAllBtn">Test all</button>
+            </div>
+            <table class="models">
+              <thead><tr><th>Model</th><th>Type</th><th>Notes</th><th>Status</th><th></th></tr></thead>
+              <tbody id="modelsBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- KEYS -->
+        <section class="page" id="page-keys">
+          <h2 class="section">API Keys</h2>
+          <p class="lead">Generate a key, then use it from any CLI: <span class="kbd">Authorization: Bearer &lt;key&gt;</span></p>
+          <div class="card">
+            <div class="row wrap" style="gap:10px">
+              <input id="keyName" placeholder="Key name (optional)" style="max-width:260px" />
+              <button class="btn" id="genKeyBtn">Generate key</button>
+            </div>
+            <label class="field">Your keys</label>
+            <div id="keysList"></div>
+            <div class="notice" style="margin-top:16px">
+              <b>CLI example (OpenCode):</b> set <span class="kbd">baseURL</span> to <span class="kbd">https://your-app.vercel.app/api</span> and
+              <span class="kbd">apiKey</span> to one of the keys above. For Codex, point <span class="kbd">base_url</span> at <span class="kbd">https://your-app.vercel.app/v1</span> — note Codex expects the Responses API; this proxy serves both <span class="kbd">/api/chat</span> and <span class="kbd">/api/responses</span>.
+            </div>
+          </div>
+        </section>
+
+        <!-- DOCS -->
+        <section class="page" id="page-docs">
+          <h2 class="section">API Reference</h2>
+          <p class="lead">OpenAI-compatible. All routes require <span class="kbd">Authorization: Bearer &lt;key&gt;</span> except <span class="kbd">GET /api/models</span>.</p>
+          <div class="card">
+            <table class="models">
+              <thead><tr><th>Method</th><th>Path</th><th>Body</th></tr></thead>
+              <tbody>
+                <tr><td><span class="tag">POST</span></td><td><span class="code">/api/chat</span></td><td>OpenAI chat completions</td></tr>
+                <tr><td><span class="tag">POST</span></td><td><span class="code">/api/responses</span></td><td>Codex Responses API</td></tr>
+                <tr><td><span class="tag">GET</span></td><td><span class="code">/api/models</span></td><td>public model list</td></tr>
+                <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/images/generations</span></td><td>{ prompt, size }</td></tr>
+                <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/images/edits</span></td><td>{ prompt, image(url/dataURL), size }</td></tr>
+                <tr><td><span class="tag">POST</span></td><td><span class="code">/api/keys</span></td><td>{ name } → new key</td></tr>
+              </tbody>
+            </table>
+            <div class="notice" style="margin-top:16px">
+              <b>Base URL for CLIs:</b> <span class="code" id="baseUrl"></span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

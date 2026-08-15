@@ -1,0 +1,2 @@
+# This project uses only the Python standard library.
+# Vercel's @vercel/python builder will install these (none required).

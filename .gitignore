@@ -1,0 +1,6 @@
+# secrets / generated
+data/keys.json
+.env
+__pycache__/
+*.pyc
+*.log
