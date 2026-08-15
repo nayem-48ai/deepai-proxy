@@ -232,6 +232,17 @@ def call_image_edit_with_blob(blob_bytes, fields):
 # disk do NOT persist across requests/instances. Validation is therefore
 # stateless: the canonical keys are the ones supplied via env
 # (SEED_API_KEY / PUBLIC_API_KEY), which are identical on every instance.
+_RATE = {}
+def _ratelimit(ip, limit=40, window=600):
+    now = time.time()
+    hits = _RATE.get(ip, [])
+    hits = [t for t in hits if now - t < window]
+    if len(hits) >= limit:
+        return False
+    hits.append(now)
+    _RATE[ip] = hits
+    return True
+
 def _admin_key():
     return os.environ.get("SEED_API_KEY") or (KEY_PREFIX + "admin" + os.urandom(8).hex())
 
@@ -351,6 +362,11 @@ def handle_request(method, path, headers, body_bytes):
         ua = headers.get("X-Tryit-Ua") or UA
         return respond(200, {"Content-Type": "application/json"}, json.dumps({"api_key": make_tryit_key(ua)}).encode())
 
+    # public key for the website / API section (never the admin key)
+    if path == "/api/keys/public" and method == "GET":
+        return respond(200, {"Content-Type": "application/json"},
+                       json.dumps({"key": _public_key(), "role": "public"}).encode())
+
     # keys
     if path == "/api/keys":
         if method == "GET":
@@ -358,6 +374,10 @@ def handle_request(method, path, headers, body_bytes):
                 return respond(403, {"Content-Type": "application/json"}, json.dumps({"error": "admin key required"}).encode())
             return respond(200, {"Content-Type": "application/json"}, json.dumps({"object": "list", "data": list_keys()}).encode())
         if method == "POST":
+            # light rate limit (per IP) to deter key farming
+            ip = (headers.get("X-Forwarded-For") or headers.get("X-Vercel-Forwarded-For") or "").split(",")[0].strip()
+            if not _ratelimit(ip):
+                return respond(429, {"Content-Type": "application/json"}, json.dumps({"error": "rate limited, try later"}).encode())
             body = _json_body(body_bytes)
             role = "public"
             if role_of(headers.get("Authorization", "")) == "admin" and body.get("role") == "admin":

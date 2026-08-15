@@ -21,7 +21,7 @@ async function ensureKey() {
     state.key = null;
   }
   try {
-    const r = await fetch(BASE + "/api/v1/keys", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    const r = await fetch(BASE + "/api/v1/keys/public");
     const j = await r.json();
     state.key = j.key;
     persist();

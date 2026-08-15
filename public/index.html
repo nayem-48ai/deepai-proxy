@@ -108,7 +108,7 @@
       <section class="page" id="page-keys">
         <header class="topbar"><button class="icon-btn menu-btn" data-menu><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button><div class="conv-title">API Keys</div></header>
         <div class="page-scroll"><div class="card">
-          <p class="muted">Your site key (prefix <b>tnxbd-</b>). Admin keys (prefix <b>tnxbd-admin</b>) can list all keys via <span class="kbd">GET /api/v1/keys</span>.</p>
+          <p class="muted">Your API key (prefix <b>tnxbd-</b>) is shown below — copy it and send <span class="kbd">Authorization: Bearer &lt;key&gt;</span> with every request. Admin keys (prefix <b>tnxbd-admin</b>) can manage keys via <span class="kbd">GET /api/v1/keys</span> and are only for the site owner. Keys are never embedded in the site's code — get yours here.</p>
           <div id="keysList"></div>
           <div class="row wrap" style="gap:10px;margin-top:12px">
             <input id="keyName" placeholder="Key name (optional)" style="max-width:240px" />
