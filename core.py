@@ -307,6 +307,16 @@ def handle_request(method, path, headers, body_bytes):
     if is_v1:
         path = "/api" + raw[len("/api/v1"):]
 
+    # Accept OpenAI/n8n-style URLs that may omit the /api prefix
+    # (e.g. /models, /v1/models, /chat/completions, /images/generations, ...).
+    if not path.startswith("/api/"):
+        if path.startswith("/v1/"):
+            path = "/api" + path
+            is_v1 = True
+        elif re.match(r"^(/models|/chat|/responses|/images|/keys)(/|$)", path):
+            path = "/api/v1" + path
+            is_v1 = True
+
     def respond(status, resp_headers, body):
         h = dict(resp_headers); h.update(CORS)
         return status, h, body
