@@ -13,7 +13,7 @@ API surface (OpenAI / OpenRouter compatible):
   GET  /api/v1/keys  -> list keys (admin key required)
 Legacy /api/* aliases are also supported.
 """
-import json, re, os, uuid, base64, hashlib, random, time, urllib.request, urllib.error
+import json, re, os, uuid, base64, hashlib, random, time, urllib.request, urllib.error, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -299,8 +299,30 @@ _TOOL_GUARD = (
     "tool by outputting a single line in this exact format and NOTHING else:\n"
     "TOOLCALL:{\"name\":\"<tool_name>\",\"arguments\":{...valid json...}}\n"
     "Rules: valid JSON only; no code fences; no extra text when calling a tool. "
-    "If you do NOT need a tool, reply with your normal answer instead."
+    "If you do NOT need a tool, reply with your normal answer instead.\n"
+    "CRITICAL: If the user asks you to create, build, write, generate, or SAVE a file, "
+    "you MUST call the Write tool to actually produce/save the file. Never merely "
+    "describe or summarize its contents — always follow through to the final action."
 )
+
+_ACTION_NUDGE = (
+    "You have the information you need. Now COMPLETE the user's request: call the Write "
+    "tool to actually save the file as requested. Output ONLY the TOOLCALL line for Write "
+    "(no explanation, no summary)."
+)
+
+_FILE_ACTION_RE = re.compile(r"\b(save|create|build|write|generate|make|produce)\b.*\b(file|html|\.html|page|landing|website|code)\b", re.I)
+
+def _wants_file_action(messages):
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+            if c and _FILE_ACTION_RE.search(c or ""):
+                return True
+            return False
+    return False
 
 def _tool_list_text(tools):
     lines = []
@@ -402,6 +424,86 @@ def _toolcall_response(name, args, model, stream):
             "message": {"role": "assistant", "content": None,
                         "tool_calls": [{"id": call_id, "type": "function", "function": fn}]}}]
     }
+
+# ---------------- Server-side web + file-build pipeline ----------------
+# The free DeepAI models are unreliable at emitting strict JSON tool calls, so
+# for "search/fetch the web then create a file" we orchestrate it ourselves:
+# fetch/search server-side, generate the artifact with DeepAI, and emit a clean
+# Write tool call so OpenCode actually saves it (like stronger providers do).
+def _http_get(url, timeout=20, max_chars=16000):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; DeepAIProxy/1.0)"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+        try:
+            return raw.decode("utf-8", "replace")
+        except Exception:
+            return str(raw)
+    except Exception:
+        return ""
+
+def _extract_urls(text):
+    return re.findall(r'https?://[^\s"\'<>]+', text or "")
+
+def _websearch(q, max_results=5):
+    try:
+        url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(q)
+        html = _http_get(url, timeout=15)
+        titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html, re.DOTALL)
+        snips = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
+        out = []
+        for i in range(min(max_results, len(titles))):
+            t = re.sub(r'<[^>]+>', '', titles[i]).strip()
+            s = re.sub(r'<[^>]+>', '', snips[i]).strip() if i < len(snips) else ''
+            if t or s:
+                out.append("- %s: %s" % (t, s))
+        return "\n".join(out)
+    except Exception:
+        return ""
+
+_SEARCH_INTENT_RE = re.compile(r"\b(search|web|fetch|latest|news|trend|202[0-9]|current|recent|lookup)\b", re.I)
+
+def _extract_path(text):
+    m = re.search(r'(/[\w.\-/]+\.\w+)', text or "")
+    if m:
+        return m.group(1)
+    m = re.search(r'(?:save|write|create|to|into)\s+(?:it\s+)?(?:to\s+|into\s+)?([\w./\\-]+\.\w+)', text or "", re.I)
+    if m:
+        return m.group(1)
+    return None
+
+def _build_file(model, request, web_ctx, path):
+    sys_p = ("You are an expert senior engineer. Using the provided context, produce the requested file. "
+             "Output ONLY the raw file content — no explanations, no markdown code fences, no commentary. "
+             "The file must be complete and self-contained.")
+    user_p = ("Context (web research):\n%s\n\nRequest: %s\n\nNow output the complete raw content for %s."
+              % (web_ctx, request, path)) if web_ctx else ("Request: %s\n\nNow output the complete raw content for %s."
+              % (request, path))
+    text = chat_once(model, [{"role": "system", "content": sys_p}, {"role": "user", "content": user_p}], None, None)
+    m = re.search(r'```(?:\w+)?\n(.*?)```', text, re.DOTALL)
+    if m:
+        text = m.group(1)
+    return text.strip()
+
+def _gather_web_ctx(last_user_text):
+    urls = _extract_urls(last_user_text)
+    if urls:
+        return "Fetched web page (%s):\n%s" % (urls[0], _http_get(urls[0])[:8000])
+    if _SEARCH_INTENT_RE.search(last_user_text or ""):
+        q = re.sub(r'\s+', ' ', last_user_text)
+        res = _websearch(q)
+        if res:
+            return "Web search results:\n" + res
+    return ""
+
+def _last_user_text(messages):
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            c = m.get("content")
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text")
+            return c or ""
+    return ""
 
 def _reasoned_answer(model, messages, images=None, files=None):
     plan_msgs = [{"role": "system",
@@ -653,7 +755,25 @@ def handle_request(method, path, headers, body_bytes):
         # plain-text contract and parse the reply back into tool_calls.
         tools = body.get("tools")
         if tools:
+            last_user = _last_user_text(messages)
+            web_ctx = _gather_web_ctx(last_user)
+            has_write = any((t.get("function", {}) or {}).get("name") == "Write" for t in tools)
+            path = _extract_path(last_user) if (_wants_file_action(messages) and has_write) else None
+            # File-build pipeline: orchestrate web + generation server-side, then
+            # emit a clean Write call so OpenCode actually saves the artifact.
+            if path and has_write and _wants_file_action(messages):
+                try:
+                    content = _build_file(real_model, last_user, web_ctx, path)
+                except urllib.error.HTTPError as e:
+                    return respond(502, {"Content-Type": "application/json"}, json.dumps({"error": "upstream model error: " + _upstream_err(e)}).encode())
+                if content:
+                    if body.get("stream"):
+                        return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, _toolcall_response("Write", {"file_path": path, "content": content}, model, True))
+                    return respond(200, {"Content-Type": "application/json"}, json.dumps(_toolcall_response("Write", {"file_path": path, "content": content}, model, False)).encode())
+            # General tool shim (inject web context when present)
             di_msgs = _to_deepai_tool_messages(messages, tools, _TOOL_GUARD)
+            if web_ctx:
+                di_msgs = di_msgs + [{"role": "user", "content": "Reference web context:\n" + web_ctx[:8000]}]
             try:
                 text = chat_once(real_model, di_msgs, None, None)
             except urllib.error.HTTPError as e:
@@ -663,6 +783,20 @@ def handle_request(method, path, headers, body_bytes):
                 if body.get("stream"):
                     return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, _toolcall_response(tc[0], tc[1], model, True))
                 return respond(200, {"Content-Type": "application/json"}, json.dumps(_toolcall_response(tc[0], tc[1], model, False)).encode())
+            # Enforce task completion: if a file was requested but the model only
+            # summarized (e.g. after a web result), nudge it to actually Write.
+            if _wants_file_action(messages) and has_write:
+                for _ in range(2):
+                    di_msgs = di_msgs + [{"role": "user", "content": _ACTION_NUDGE}]
+                    try:
+                        text = chat_once(real_model, di_msgs, None, None)
+                    except urllib.error.HTTPError as e:
+                        return respond(502, {"Content-Type": "application/json"}, json.dumps({"error": "upstream model error: " + _upstream_err(e)}).encode())
+                    tc = _parse_toolcall(text)
+                    if tc:
+                        if body.get("stream"):
+                            return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}, _toolcall_response(tc[0], tc[1], model, True))
+                        return respond(200, {"Content-Type": "application/json"}, json.dumps(_toolcall_response(tc[0], tc[1], model, False)).encode())
             # no tool call -> return the text as a normal answer
             if body.get("stream"):
                 return respond(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
