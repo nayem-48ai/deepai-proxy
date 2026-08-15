@@ -46,7 +46,8 @@ button { font-family: inherit; cursor: pointer; }
 .side-item svg { width: 18px; height: 18px; }
 .side-item:hover { background: var(--panel-2); color: var(--text); }
 .side-item.active { background: var(--primary-soft); color: var(--primary); }
-.theme-btn { margin-top: 8px; width: 100%; height: 38px; border-radius: 9px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); display: grid; place-items: center; transition: background .15s, color .15s; }
+.theme-btn { margin-top: 8px; width: 100%; height: 40px; border-radius: 9px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); display: grid; place-items: center; transition: background .15s, color .15s; }
+.theme-btn svg { width: 18px; height: 18px; display: block; }
 .theme-btn:hover { background: var(--panel-2); color: var(--text); }
 
 /* main */
@@ -59,6 +60,13 @@ button { font-family: inherit; cursor: pointer; }
 .menu-btn { display: none; }
 .page { display: none; flex: 1; min-height: 0; flex-direction: column; }
 .page.active { display: flex; animation: pagein .22s ease; }
+.chat-page { position: relative; }
+
+/* in-chat floating toolbar (undo / retry) */
+.chat-fab { position: absolute; right: 18px; bottom: 96px; display: flex; flex-direction: column; gap: 10px; z-index: 6; }
+.fab { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel); color: var(--muted); display: grid; place-items: center; box-shadow: var(--shadow); transition: background .15s, color .15s, transform .08s; }
+.fab:hover { color: var(--primary-600); background: var(--panel-2); }
+.fab:active { transform: scale(.94); }
 
 /* chat */
 .chat-scroll { flex: 1; overflow-y: auto; padding: 26px 0; }
@@ -163,5 +171,6 @@ table.models tr:hover td { background: var(--panel-2); }
   .sidebar.open { transform: none; }
   .close-side { display: grid; }
   .menu-btn { display: grid; }
+  .chat-fab { bottom: 132px; right: 14px; }
   .chat-inner, .composer-inner, .composer-actions, .att-row, .typing { padding-left: 14px; padding-right: 14px; max-width: 100%; }
 }

@@ -13,16 +13,34 @@ const state = {
 
 /* ---------- key ---------- */
 async function ensureKey() {
-  if (state.key) return state.key;
+  if (state.key) {
+    try {
+      const r = await fetch(BASE + "/api/v1/keys", { headers: { Authorization: "Bearer " + state.key } });
+      if (r.status !== 401) { renderKeys(); return state.key; }
+    } catch (e) {}
+    state.key = null;
+  }
   try {
     const r = await fetch(BASE + "/api/v1/keys", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
     const j = await r.json();
     state.key = j.key;
+    persist();
     renderKeys();
-  } catch (e) { state.key = "tnxbd-public"; }
+  } catch (e) { state.key = null; }
   return state.key;
 }
 function auth() { return { Authorization: "Bearer " + state.key }; }
+
+// Browser-side tryit key for calling DeepAI image APIs directly (uses the
+// visitor's own IP/quota and a UA-matched key, avoiding the server-IP limit).
+let _tryitCache = null;
+async function tryitKey() {
+  if (_tryitCache) return _tryitCache;
+  const r = await fetch(BASE + "/api/v1/tryit", { headers: { "X-Tryit-Ua": navigator.userAgent } });
+  const j = await r.json();
+  _tryitCache = j.api_key;
+  return _tryitCache;
+}
 
 /* ---------- models ---------- */
 async function loadModels() {
@@ -150,8 +168,17 @@ async function send() {
 function renderTail(m) { const inner = $("#chatInner"); const last = inner?.lastElementChild; if (last && last.classList.contains("assistant") && !last.classList.contains("image")) { last.querySelector(".bubble").firstChild ? (last.querySelector(".bubble").childNodes[0].nodeType === 3 ? (last.querySelector(".bubble").childNodes[0].textContent = m.content) : null) : null; scrollChat(); } else renderChat(); }
 
 async function callImg(prompt, size = 640) {
-  const r = await fetch(BASE + "/api/v1/images/generations", { method: "POST", headers: { ...auth(), "Content-Type": "application/json" }, body: JSON.stringify({ prompt, size: size + "x" + size }) });
-  const j = await r.json(); if (j.error) throw new Error(j.error); return j.data[0].url;
+  const fd = new FormData();
+  fd.append("text", prompt);
+  fd.append("width", String(size)); fd.append("height", String(size));
+  fd.append("image_generator_version", "hd");
+  fd.append("use_new_model", "true"); fd.append("use_old_model", "false");
+  fd.append("quality", "true"); fd.append("generation_source", "img");
+  const key = await tryitKey();
+  const resp = await fetch("https://api.deepai.org/api/text2img", { method: "POST", headers: { "api-key": key }, body: fd });
+  const j = await resp.json();
+  if (j.output_url) return j.output_url;
+  throw new Error(j.err || "image generation failed");
 }
 
 /* ---------- attachments ---------- */
@@ -181,23 +208,36 @@ function renderImgMode() {
   $("#editOnly").style.display = edit ? "block" : "none";
 }
 async function generateImage() {
-  await ensureKey();
-  const prompt = $("#imgPrompt").value.trim(); if (!prompt) return;
-  const size = $("#imgSize").value; const edit = $("#imgMode").value === "image-editor";
+  const prompt = $("#imgPrompt").value.trim();
+  if (!prompt) { $("#imgStatus").textContent = "Enter a prompt"; return; }
+  const size = $("#imgSize").value;
+  const [w, h] = size.split("x");
+  const edit = $("#imgMode").value === "image-editor";
   $("#imgStatus").textContent = "Generating…"; $("#genBtn").disabled = true;
   try {
-    let res;
+    const fd = new FormData();
+    fd.append("text", prompt);
+    fd.append("width", w); fd.append("height", h);
+    fd.append("image_generator_version", "hd");
+    fd.append("use_new_model", "true"); fd.append("use_old_model", "false");
+    fd.append("quality", "true"); fd.append("generation_source", "img");
+    let endpoint = "text2img";
     if (edit) {
-      let image = $("#imgUrl").value.trim();
+      endpoint = "image-editor";
       const f = $("#imgFile").files[0];
-      if (!image && f) { image = await fileData(f); }
-      res = await fetch(BASE + "/api/v1/images/edits", { method: "POST", headers: { ...auth(), "Content-Type": "application/json" }, body: JSON.stringify({ prompt, size, image }) });
-    } else {
-      res = await fetch(BASE + "/api/v1/images/generations", { method: "POST", headers: { ...auth(), "Content-Type": "application/json" }, body: JSON.stringify({ prompt, size }) });
+      if (f) fd.append("image", f, f.name);
+      else if ($("#imgUrl").value.trim()) {
+        try {
+          const blob = await (await fetch($("#imgUrl").value.trim())).blob();
+          fd.append("image", blob, "img.png");
+        } catch (e) { throw new Error("Could not load the image URL (CORS)"); }
+      } else throw new Error("Provide a source image (upload or URL)");
     }
-    const j = await res.json();
-    if (j.error) throw new Error(j.error);
-    const url = j.data[0].url;
+    const key = await tryitKey();
+    const resp = await fetch("https://api.deepai.org/api/" + endpoint, { method: "POST", headers: { "api-key": key }, body: fd });
+    const j = await resp.json();
+    if (!j.output_url) throw new Error(j.err || "No image returned");
+    const url = j.output_url;
     const grid = $("#imgGrid");
     const card = document.createElement("div"); card.className = "img-card";
     card.innerHTML = `<img src="${url}"><a class="dl" href="${url}" download>${ic("dl")}</a>`;

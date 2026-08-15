@@ -19,7 +19,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 DEEPAI_CHAT = "https://api.deepai.org/hacking_is_a_serious_crime"
 DEEPAI_IMG = "https://api.deepai.org/api"
-KEYS_FILE = os.path.join(HERE, "data", "keys.json")
 KEY_PREFIX = "tnxbd-"
 
 CORS = {
@@ -68,10 +67,10 @@ def openrouter_models():
 # ---------------- tryit key (MD5, browser-client compatible) ----------------
 def _h(s):
     return hashlib.md5(s.encode()).hexdigest()[::-1]
-def make_tryit_key():
+def make_tryit_key(ua=UA):
     r = str(random.randint(0, 10 ** 11))
-    inner = _h(UA + r + "hackers_become_a_little_stinkier_every_time_they_hack")
-    return "tryit-" + r + "-" + _h(UA + _h(UA + inner))
+    inner = _h(ua + r + "hackers_become_a_little_stinkier_every_time_they_hack")
+    return "tryit-" + r + "-" + _h(ua + _h(ua + inner))
 
 # ---------------- multipart ----------------
 def _multipart(fields):
@@ -229,53 +228,37 @@ def call_image_edit_with_blob(blob_bytes, fields):
         return None, f"DeepAI {e.code}: {detail}"
 
 # ---------------- API keys (admin / public) ----------------
-def _seed_key():
+# Vercel serverless uses a read-only, ephemeral filesystem, so keys written to
+# disk do NOT persist across requests/instances. Validation is therefore
+# stateless: the canonical keys are the ones supplied via env
+# (SEED_API_KEY / PUBLIC_API_KEY), which are identical on every instance.
+def _admin_key():
     return os.environ.get("SEED_API_KEY") or (KEY_PREFIX + "admin" + os.urandom(8).hex())
 
-def _save_keys(data):
-    try:
-        os.makedirs(os.path.dirname(KEYS_FILE), exist_ok=True)
-        with open(KEYS_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-    except OSError:
-        pass
+def _public_key():
+    return os.environ.get("PUBLIC_API_KEY") or (KEY_PREFIX + "public" + os.urandom(8).hex())
 
 def gen_key(role="public", name="key"):
-    data = _load_keys()
-    k = f"{KEY_PREFIX}{role}" + os.urandom(8).hex()  # 16 hex after role
-    data["keys"].append({"key": k, "name": name, "role": role, "created": int(time.time())})
-    _save_keys(data)
-    if not os.path.exists(KEYS_FILE):
-        return k
-    return k
+    return _admin_key() if role == "admin" else _public_key()
 
 def list_keys():
-    return _load_keys()["keys"]
+    return [
+        {"key": _admin_key(), "name": "admin", "role": "admin", "created": 0},
+        {"key": _public_key(), "name": "public", "role": "public", "created": 0},
+    ]
 
 def role_of(auth_header):
     if not auth_header:
         return None
     t = auth_header.replace("Bearer ", "").replace("bearer ", "")
-    if t == os.environ.get("SEED_API_KEY"):
+    if t == _admin_key():
         return "admin"
-    if t == os.environ.get("PUBLIC_API_KEY"):
+    if t == _public_key():
         return "public"
-    for k in _load_keys()["keys"]:
-        if k["key"] == t:
-            return k.get("role", "public")
     return None
 
 def valid_key(auth_header):
     return role_of(auth_header) is not None
-
-def _load_keys():
-    if not os.path.exists(KEYS_FILE):
-        seed = _seed_key()
-        data = {"keys": [{"key": seed, "name": "default", "role": "admin", "created": int(time.time())}]}
-        _save_keys(data)
-        return data
-    with open(KEYS_FILE) as f:
-        return json.load(f)
 
 # ---------------- helpers ----------------
 def _size_to_wh(size):
@@ -338,6 +321,11 @@ def handle_request(method, path, headers, body_bytes):
         if is_v1:
             return respond(200, {"Content-Type": "application/json"}, json.dumps(openrouter_models()).encode())
         return respond(200, {"Content-Type": "application/json"}, json.dumps(load_models()).encode())
+
+    # tryit key (public) — used by the browser to call DeepAI image APIs directly
+    if path == "/api/tryit" and method == "GET":
+        ua = headers.get("X-Tryit-Ua") or UA
+        return respond(200, {"Content-Type": "application/json"}, json.dumps({"api_key": make_tryit_key(ua)}).encode())
 
     # keys
     if path == "/api/keys":

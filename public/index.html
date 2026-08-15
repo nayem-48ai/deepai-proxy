@@ -49,6 +49,14 @@
         </header>
         <div class="chat-scroll" id="chatScroll"></div>
         <div class="typing" id="typing" hidden><span></span><span></span><span></span></div>
+        <div class="chat-fab">
+          <button class="fab" id="undoBtn" title="Undo last message">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          </button>
+          <button class="fab" id="retryBtn" title="Retry last turn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          </button>
+        </div>
         <div class="composer">
           <div class="att-row" id="attRow"></div>
           <div class="composer-inner">
@@ -64,8 +72,6 @@
             </button>
           </div>
           <div class="composer-actions">
-            <button class="text-btn" id="undoBtn">Undo last</button>
-            <button class="text-btn" id="retryBtn">Retry</button>
             <span id="imgHint" class="faint"></span>
           </div>
           <input type="file" id="fileInput" accept="image/*,audio/*,.pdf,.txt,.doc,.docx,.csv" multiple style="display:none" />
