@@ -129,6 +129,60 @@
             <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/v1/images/edits</span></td><td>JSON or multipart: prompt+image</td></tr>
             <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/keys</span></td><td>create key (public)</td></tr>
           </tbody></table>
+          <details style="margin-top:18px">
+            <summary style="cursor:pointer;font-weight:600;color:var(--text)">📋 Copy-paste curl examples</summary>
+            <div style="margin-top:12px;display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Chat — non-stream</div>
+                <div class="code" id="curl-chat" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v3.2","messages":[{"role":"user","content":"hi"}]}'</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Chat — streaming</div>
+                <div class="code" id="curl-chat-stream" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v3.2","stream":true,"messages":[{"role":"user","content":"hi"}]}'</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Responses API</div>
+                <div class="code" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/responses \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v3.2","input":"hi"}'</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">List models</div>
+                <div class="code" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/models</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Full models (with metadata)</div>
+                <div class="code" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/models/full \
+  -H "Authorization: Bearer $KEY"</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Image generation</div>
+                <div class="code" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/images/generations \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"a sunset over mountains","size":"1024x1024"}'</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Get tryit key (for direct DeepAI calls)</div>
+                <div class="code" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/tryit \
+  -H "X-Tryit-Ua: Mozilla/5.0"</div>
+              </div>
+              <div>
+                <div class="muted" style="font-size:12px;margin-bottom:6px">Rate limit test (429 after 40 POSTs)</div>
+                <div class="code" style="white-space:pre-wrap;word-break:break-all">curl <span class="curl-url"></span>/api/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v3.2","messages":[{"role":"user","content":"hi"}]}'</div>
+              </div>
+            </div>
+          </details>
           <div class="notice" style="margin-top:16px"><b>Client config</b> — Type: <span class="kbd">OpenAI</span>, Name: <span class="kbd">TNXBD</span>, Base URL: <span class="code" id="baseUrl2"></span>, Key: <span class="kbd">tnxbd-…</span></div>
         </div></div>
       </section>

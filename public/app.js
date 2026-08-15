@@ -323,6 +323,12 @@ async function init() {
   if (!state.convs.length) { state.convs = []; newConv(); } else { renderConvs(); renderChat(); }
   await loadModels();
   $("#baseUrl").textContent = BASE; $("#baseUrl2").textContent = BASE;
+  $$(".curl-url").forEach(el => el.textContent = BASE);
+  $$(".code").forEach(el => {
+    el.title = "Click to copy";
+    el.style.cursor = "pointer";
+    el.onclick = () => { navigator.clipboard.writeText(el.textContent).then(() => { const o = el.textContent; el.textContent = "✓ copied"; setTimeout(() => el.textContent = o, 1200); }); };
+  });
   $$(".side-item").forEach(a => a.onclick = () => openPage(a.dataset.page));
   $("#newChat").onclick = newConv;
   $("#modelSelect").onchange = (e) => { state.model = e.target.value; if (curConv()) curConv().model = state.model; persist(); };
