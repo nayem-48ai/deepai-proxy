@@ -13,6 +13,12 @@ def app(environ, start_response):
     path = environ.get("PATH_INFO", "/")
     if not path:
         path = "/"
+    # Vercel maps api/index.py to /api and passes the sub-path as PATH_INFO
+    # (e.g. "/chat"). Normalize so handle_request always sees "/api/...".
+    if not path.startswith("/api"):
+        path = "/api" + path
+    if path == "/api":
+        path = "/api/models"
     raw_headers = {}
     for k, v in environ.items():
         if k.startswith("HTTP_"):
