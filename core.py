@@ -7,9 +7,10 @@ API surface (OpenAI / OpenRouter compatible):
   POST /api/v1/chat/completions   OpenAI chat completions (stream + non-stream, multimodal)
   POST /api/v1/responses          Codex Responses API
   GET  /api/v1/models             OpenRouter-style model list
-  POST /api/v1/images/generations
-  POST /api/v1/images/edits
-  POST /api/v1/keys  GET /api/v1/keys   key management
+  POST /api/v1/images/generations (JSON or multipart)  text-to-image
+  POST /api/v1/images/edits       (JSON or multipart)  image-to-image
+  POST /api/v1/keys  -> create a key (public by default; admin role if admin requests)
+  GET  /api/v1/keys  -> list keys (admin key required)
 Legacy /api/* aliases are also supported.
 """
 import json, re, os, uuid, base64, hashlib, random, time, urllib.request, urllib.error
@@ -40,7 +41,6 @@ def all_model_ids():
     return ids
 
 def openrouter_models():
-    """OpenRouter/OpenAI-style /v1/models listing."""
     data = []
     for cat in load_models()["categories"].values():
         for m in cat["models"]:
@@ -55,24 +55,12 @@ def openrouter_models():
                 ctx = m.get("context_length", 32000)
                 modality = "text"
             data.append({
-                "id": m["id"],
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "deepai",
-                "name": m["label"],
-                "description": m.get("note", ""),
-                "architecture": {
-                    "modality": modality,
-                    "input_modalities": in_mod,
-                    "output_modalities": out_mod,
-                    "tokenizer": m.get("tokenizer", "deepai"),
-                    "context_length": ctx,
-                    "instruction_window": ctx,
-                },
-                "pricing": {"prompt": "0", "completion": "0", "request": "0",
-                            "image": "0", "web_search": "0", "internal_reasoning": "0"},
-                "top_provider": {"context_length": ctx, "is_moderated": False,
-                                 "max_completion_tokens": None},
+                "id": m["id"], "object": "model", "created": 1700000000,
+                "owned_by": "deepai", "name": m["label"], "description": m.get("note", ""),
+                "architecture": {"modality": modality, "input_modalities": in_mod, "output_modalities": out_mod,
+                                  "tokenizer": m.get("tokenizer", "deepai"), "context_length": ctx, "instruction_window": ctx},
+                "pricing": {"prompt": "0", "completion": "0", "request": "0", "image": "0", "web_search": "0", "internal_reasoning": "0"},
+                "top_provider": {"context_length": ctx, "is_moderated": False, "max_completion_tokens": None},
                 "per_request_limits": None,
             })
     return {"object": "list", "data": data}
@@ -80,23 +68,18 @@ def openrouter_models():
 # ---------------- tryit key (MD5, browser-client compatible) ----------------
 def _h(s):
     return hashlib.md5(s.encode()).hexdigest()[::-1]
-
 def make_tryit_key():
     r = str(random.randint(0, 10 ** 11))
     inner = _h(UA + r + "hackers_become_a_little_stinkier_every_time_they_hack")
     return "tryit-" + r + "-" + _h(UA + _h(UA + inner))
 
-# ---------------- multipart builders ----------------
+# ---------------- multipart ----------------
 def _multipart(fields):
     boundary = "----deepaiproxy" + uuid.uuid4().hex
-    body = "".join(
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n"
-        for k, v in fields.items()
-    ).encode() + f"--{boundary}--\r\n".encode()
+    body = "".join(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n" for k, v in fields.items()).encode() + f"--{boundary}--\r\n".encode()
     return boundary, body
 
 def _build_multipart(parts):
-    """parts: ('text', name, value) | ('file', name, filename, bytes, ctype)."""
     boundary = "----deepaiproxy" + uuid.uuid4().hex
     body = b""
     for p in parts:
@@ -108,8 +91,32 @@ def _build_multipart(parts):
     body += f"--{boundary}--\r\n".encode()
     return boundary, body
 
+def _parse_multipart(body_bytes, content_type):
+    fields, files = {}, {}
+    m = re.search(r"boundary=([^;]+)", content_type or "")
+    if not m:
+        return fields, files
+    boundary = ("--" + m.group(1).strip().strip('"')).encode()
+    for part in body_bytes.split(boundary):
+        if b"\r\n\r\n" not in part:
+            continue
+        head, data = part.split(b"\r\n\r\n", 1)
+        data = data.rstrip(b"\r\n")
+        head = head.decode("utf-8", "replace")
+        nm = re.search(r'name="([^"]+)"', head)
+        if not nm:
+            continue
+        name = nm.group(1)
+        fn = re.search(r'filename="([^"]*)"', head)
+        ct = re.search(r"Content-Type: ([^\r\n]+)", head)
+        if fn and fn.group(1):
+            ctype = ct.group(1).strip() if ct else "application/octet-stream"
+            files[name] = (fn.group(1), ctype, data)
+        else:
+            fields[name] = data.decode("utf-8", "replace")
+    return fields, files
+
 def _image_parts(images):
-    """DeepAI image fields (image/image2/image3) from data URLs or http URLs."""
     out = []
     for img, nm in zip(images, ["image", "image2", "image3"]):
         if img.startswith("data:"):
@@ -139,18 +146,11 @@ def _img_cookie():
     return f"deepai_device_id={did}" if did else ""
 
 def stream_chat(model, messages, images=None, files=None):
-    """Yield text deltas from DeepAI's anonymous chat endpoint.
-    images/files are forwarded when present; on error we fall back to text-only
-    so chat never breaks for models that don't accept attachments."""
     chat_history = json.dumps(messages)
     parts = [
-        ("text", "chat_style", "chat"),
-        ("text", "model", model),
-        ("text", "chatHistory", chat_history),
-        ("text", "session_uuid", str(uuid.uuid4())),
-        ("text", "tool_activity_support", "1"),
-        ("text", "hacker_is_stinky", "very_stinky"),
-        ("text", "enabled_tools", json.dumps(["image_generator", "image_editor"])),
+        ("text", "chat_style", "chat"), ("text", "model", model), ("text", "chatHistory", chat_history),
+        ("text", "session_uuid", str(uuid.uuid4())), ("text", "tool_activity_support", "1"),
+        ("text", "hacker_is_stinky", "very_stinky"), ("text", "enabled_tools", json.dumps(["image_generator", "image_editor"])),
     ]
     had_attach = bool(images or files)
     for p in _image_parts(images or []):
@@ -158,13 +158,9 @@ def stream_chat(model, messages, images=None, files=None):
     fp = _file_part((files or [None])[0]) if files else None
     if fp:
         parts.append(fp)
-
     boundary, body = _build_multipart(parts)
-    req = urllib.request.Request(
-        DEEPAI_CHAT, data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA},
-        method="POST",
-    )
+    req = urllib.request.Request(DEEPAI_CHAT, data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA}, method="POST")
     record_re = re.compile(r"\x1c\{.*?\}\x1c", re.DOTALL)
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -197,12 +193,8 @@ def call_image(endpoint, fields):
     if not cookie:
         return None, "Image generation needs DEEPAI_DEVICE_ID (server env)."
     boundary, body = _multipart(fields)
-    req = urllib.request.Request(
-        DEEPAI_IMG + "/" + endpoint, data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
-                 "User-Agent": UA, "Cookie": cookie, "api-key": make_tryit_key()},
-        method="POST",
-    )
+    req = urllib.request.Request(DEEPAI_IMG + "/" + endpoint, data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA, "Cookie": cookie, "api-key": make_tryit_key()}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read().decode()), None
@@ -219,14 +211,12 @@ def call_image_edit_with_blob(blob_bytes, fields):
     if not cookie:
         return None, "Set DEEPAI_DEVICE_ID for image editing."
     boundary = "----deepaiproxy" + uuid.uuid4().hex
-    payload = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"img.png\"\r\n"
-               f"Content-Type: image/png\r\n\r\n").encode() + blob_bytes + f"\r\n--{boundary}\r\n".encode()
+    payload = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"img.png\"\r\nContent-Type: image/png\r\n\r\n").encode() + blob_bytes + f"\r\n--{boundary}\r\n".encode()
     for k, v in fields.items():
         payload += f"Content-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
     payload += f"--{boundary}--\r\n".encode()
     req = urllib.request.Request(DEEPAI_IMG + "/image-editor", data=payload,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA,
-                 "Cookie": cookie, "api-key": make_tryit_key()}, method="POST")
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": UA, "Cookie": cookie, "api-key": make_tryit_key()}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read().decode()), None
@@ -238,9 +228,9 @@ def call_image_edit_with_blob(blob_bytes, fields):
             pass
         return None, f"DeepAI {e.code}: {detail}"
 
-# ---------------- API keys ----------------
+# ---------------- API keys (admin / public) ----------------
 def _seed_key():
-    return os.environ.get("SEED_API_KEY") or (KEY_PREFIX + os.urandom(12).hex())
+    return os.environ.get("SEED_API_KEY") or (KEY_PREFIX + "admin" + os.urandom(8).hex())
 
 def _save_keys(data):
     try:
@@ -248,32 +238,40 @@ def _save_keys(data):
         with open(KEYS_FILE, "w") as f:
             json.dump(data, f, indent=2)
     except OSError:
-        pass  # read-only FS (e.g. Vercel) — keys are best-effort / env-based
+        pass
 
-def gen_key(name="key"):
+def gen_key(role="public", name="key"):
     data = _load_keys()
-    k = KEY_PREFIX + os.urandom(12).hex()
-    data["keys"].append({"key": k, "name": name, "created": int(time.time())})
+    k = f"{KEY_PREFIX}{role}" + os.urandom(8).hex()  # 16 hex after role
+    data["keys"].append({"key": k, "name": name, "role": role, "created": int(time.time())})
     _save_keys(data)
     if not os.path.exists(KEYS_FILE):
-        return os.environ.get("SEED_API_KEY") or (data["keys"][0]["key"] if data["keys"] else k)
+        return k
     return k
 
 def list_keys():
     return _load_keys()["keys"]
 
-def valid_key(auth_header):
+def role_of(auth_header):
     if not auth_header:
-        return False
+        return None
     t = auth_header.replace("Bearer ", "").replace("bearer ", "")
     if t == os.environ.get("SEED_API_KEY"):
-        return True
-    return any(k["key"] == t for k in _load_keys()["keys"])
+        return "admin"
+    if t == os.environ.get("PUBLIC_API_KEY"):
+        return "public"
+    for k in _load_keys()["keys"]:
+        if k["key"] == t:
+            return k.get("role", "public")
+    return None
+
+def valid_key(auth_header):
+    return role_of(auth_header) is not None
 
 def _load_keys():
     if not os.path.exists(KEYS_FILE):
         seed = _seed_key()
-        data = {"keys": [{"key": seed, "name": "default", "created": int(time.time())}]}
+        data = {"keys": [{"key": seed, "name": "default", "role": "admin", "created": int(time.time())}]}
         _save_keys(data)
         return data
     with open(KEYS_FILE) as f:
@@ -327,13 +325,11 @@ def handle_request(method, path, headers, body_bytes):
         path = "/api" + raw[len("/api/v1"):]
 
     def respond(status, resp_headers, body):
-        h = dict(resp_headers)
-        h.update(CORS)
+        h = dict(resp_headers); h.update(CORS)
         return status, h, body
 
     if method == "OPTIONS":
         return respond(204, {}, b"")
-
     if not path.startswith("/api/"):
         return respond(*_serve_static(path))
 
@@ -343,22 +339,27 @@ def handle_request(method, path, headers, body_bytes):
             return respond(200, {"Content-Type": "application/json"}, json.dumps(openrouter_models()).encode())
         return respond(200, {"Content-Type": "application/json"}, json.dumps(load_models()).encode())
 
-    # keys (site)
+    # keys
     if path == "/api/keys":
         if method == "GET":
+            if role_of(headers.get("Authorization", "")) != "admin":
+                return respond(403, {"Content-Type": "application/json"}, json.dumps({"error": "admin key required"}).encode())
             return respond(200, {"Content-Type": "application/json"}, json.dumps({"object": "list", "data": list_keys()}).encode())
         if method == "POST":
             body = _json_body(body_bytes)
-            k = gen_key((body.get("name") or "key"))
-            return respond(200, {"Content-Type": "application/json"}, json.dumps({"key": k}).encode())
+            role = "public"
+            if role_of(headers.get("Authorization", "")) == "admin" and body.get("role") == "admin":
+                role = "admin"
+            k = gen_key(role, (body.get("name") or "key"))
+            return respond(200, {"Content-Type": "application/json"}, json.dumps({"key": k, "role": role}).encode())
         return respond(405, {}, b"")
 
-    # auth required below
-    if not valid_key(headers.get("Authorization", "")):
+    # auth required for everything below
+    if role_of(headers.get("Authorization", "")) is None:
         return respond(401, {"Content-Type": "application/json"},
                        json.dumps({"error": "Invalid or missing API key. Use: Authorization: Bearer <key>"}).encode())
 
-    # chat completions (OpenAI format, multimodal)
+    # chat completions (multimodal)
     if path in ("/api/chat", "/api/chat/completions") and method == "POST":
         body = _json_body(body_bytes)
         model = body.get("model", "standard")
@@ -367,10 +368,8 @@ def handle_request(method, path, headers, body_bytes):
         files = body.get("files") or None
         if body.get("stream"):
             def gen():
-                yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12],
-                                              "object": "chat.completion.chunk",
-                                              "model": model,
-                                              "choices": [{"index": 0, "delta": {"role": "assistant"}}]}).encode() + b"\n\n"
+                yield b"data: " + json.dumps({"id": "chatcmpl-" + uuid.uuid4().hex[:12], "object": "chat.completion.chunk",
+                                              "model": model, "choices": [{"index": 0, "delta": {"role": "assistant"}}]}).encode() + b"\n\n"
                 for d in stream_chat(model, messages, images, files):
                     yield b"data: " + json.dumps({"choices": [{"index": 0, "delta": {"content": d}}]}).encode() + b"\n\n"
                 yield b"data: [DONE]\n\n"
@@ -381,7 +380,7 @@ def handle_request(method, path, headers, body_bytes):
             "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]
         }).encode())
 
-    # responses (Codex Responses API)
+    # responses (Codex)
     if path == "/api/responses" and method == "POST":
         body = _json_body(body_bytes)
         model = body.get("model", "standard")
@@ -403,47 +402,45 @@ def handle_request(method, path, headers, body_bytes):
         text = chat_once(model, messages, images, files)
         return respond(200, {"Content-Type": "application/json"}, json.dumps({
             "id": rid, "object": "response", "model": model,
-            "output": [{"type": "message", "role": "assistant",
-                        "content": [{"type": "output_text", "text": text}]}],
-            "status": "completed"}).encode())
+            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}], "status": "completed"
+        }).encode())
 
-    # images: text to image
-    if path == "/api/images/generations" and method == "POST":
-        body = _json_body(body_bytes)
-        prompt = body.get("prompt", "")
-        w, h = _size_to_wh(body.get("size", "640x640"))
-        fields = {"text": prompt, "generation_source": "img", "width": str(w), "height": str(h),
-                  "image_generator_version": "hd", "use_new_model": "true",
-                  "use_old_model": "false", "quality": "true"}
-        res, err = call_image("text2img", fields)
-        if err:
-            return respond(500, {"Content-Type": "application/json"}, json.dumps({"error": err}).encode())
-        url = (res or {}).get("output_url") or (res or {}).get("share_url")
-        return respond(200, {"Content-Type": "application/json"},
-                       json.dumps({"created": int(time.time()), "data": [{"url": url}]}).encode())
-
-    # images: image to image (edit)
-    if path == "/api/images/edits" and method == "POST":
-        body = _json_body(body_bytes)
-        prompt = body.get("prompt", "")
-        image = body.get("image", "")
-        w, h = _size_to_wh(body.get("size", "640x640"))
-        fields = {"text": prompt, "generation_source": "img", "width": str(w), "height": str(h),
-                  "image_generator_version": "hd", "quality": "true"}
-        if image.startswith("data:"):
-            try:
-                blob = base64.b64decode(image.split(",", 1)[1])
-            except Exception as e:
-                return respond(400, {"Content-Type": "application/json"}, json.dumps({"error": "bad image data: " + str(e)}).encode())
-            res, err = call_image_edit_with_blob(blob, fields)
+    # images
+    if path in ("/api/images/generations", "/api/images/edits") and method == "POST":
+        is_edit = path.endswith("edits")
+        ct = headers.get("Content-Type", "")
+        prompt, size, image = "", "640x640", None
+        if ct.startswith("multipart"):
+            fields, files = _parse_multipart(body_bytes, ct)
+            prompt = fields.get("prompt") or fields.get("text", "")
+            size = fields.get("size", "640x640")
+            if is_edit and "image" in files:
+                fn, fct, blob = files["image"]
+                image = "data:" + fct + ";base64," + base64.b64encode(blob).decode()
         else:
-            fields["image"] = image
-            res, err = call_image("image-editor", fields)
+            b = _json_body(body_bytes)
+            prompt = b.get("prompt", "")
+            size = b.get("size", "640x640")
+            image = b.get("image")
+        if is_edit:
+            if not image:
+                return respond(400, {"Content-Type": "application/json"}, json.dumps({"error": "image required for edit"}).encode())
+            w, h = _size_to_wh(size)
+            fields = {"text": prompt, "generation_source": "img", "width": str(w), "height": str(h), "image_generator_version": "hd", "quality": "true"}
+            if image.startswith("data:"):
+                res, err = call_image_edit_with_blob(base64.b64decode(image.split(",", 1)[1]), fields)
+            else:
+                fields["image"] = image
+                res, err = call_image("image-editor", fields)
+        else:
+            w, h = _size_to_wh(size)
+            fields = {"text": prompt, "generation_source": "img", "width": str(w), "height": str(h),
+                      "image_generator_version": "hd", "use_new_model": "true", "use_old_model": "false", "quality": "true"}
+            res, err = call_image("text2img", fields)
         if err:
             return respond(500, {"Content-Type": "application/json"}, json.dumps({"error": err}).encode())
         url = (res or {}).get("output_url") or (res or {}).get("share_url")
-        return respond(200, {"Content-Type": "application/json"},
-                       json.dumps({"created": int(time.time()), "data": [{"url": url}]}).encode())
+        return respond(200, {"Content-Type": "application/json"}, json.dumps({"created": int(time.time()), "data": [{"url": url}]}).encode())
 
     return respond(404, {"Content-Type": "application/json"}, json.dumps({"error": "not found"}).encode())
 

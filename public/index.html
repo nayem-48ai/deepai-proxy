@@ -9,14 +9,17 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <div class="overlay" id="overlay"></div>
   <div class="shell">
-    <!-- sidebar -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="logo">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>
         </div>
         <div class="name">TNXBD</div>
+        <button class="close-side" id="closeSide" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </div>
       <button class="newchat" id="newChat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -28,29 +31,31 @@
         <a class="side-item" data-page="images"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 20"/></svg> Images</a>
         <a class="side-item" data-page="models"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg> Models</a>
         <a class="side-item" data-page="keys"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3 2 2-2 2-2-2-2 2 2 2z"/></svg> API Keys</a>
-        <a class="side-item" data-page="docs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.0 0 0 1 6.5 2z"/></svg> Docs</a>
+        <a class="side-item" data-page="docs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Docs</a>
       </nav>
       <button class="theme-btn" id="themeToggle" title="Toggle theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
       </button>
     </aside>
 
-    <!-- main -->
     <div class="main">
-      <!-- CHAT -->
       <section class="page active chat-page" id="page-chat">
         <header class="topbar">
+          <button class="icon-btn menu-btn" id="menuBtn" aria-label="Menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+          </button>
           <div class="conv-title" id="convTitle">New chat</div>
           <select id="modelSelect" class="model-select"></select>
         </header>
         <div class="chat-scroll" id="chatScroll"></div>
+        <div class="typing" id="typing" hidden><span></span><span></span><span></span></div>
         <div class="composer">
           <div class="att-row" id="attRow"></div>
           <div class="composer-inner">
-            <button class="comp-btn" id="attachBtn" title="Attach file / image / audio">
+            <button class="comp-btn" id="attachBtn" title="Attach image / audio / file">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             </button>
-            <button class="comp-btn" id="imgToggle" title="Toggle image mode">
+            <button class="comp-btn" id="imgToggle" title="Toggle image generation">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.6-3.6a2 2 0 0 0-2.8 0L6 20"/></svg>
             </button>
             <textarea id="msgInput" placeholder="Send a message…  (Enter to send, Shift+Enter for newline)"></textarea>
@@ -67,92 +72,59 @@
         </div>
       </section>
 
-      <!-- IMAGES -->
       <section class="page" id="page-images">
-        <header class="topbar"><div class="conv-title">Image Generator & Editor</div></header>
-        <div class="page-scroll">
-          <div class="card">
-            <label class="field" for="imgMode">Mode</label>
-            <select id="imgMode">
-              <option value="text2img">Text to Image</option>
-              <option value="image-editor">Image to Image (edit)</option>
-            </select>
-            <label class="field" for="imgPrompt">Prompt</label>
-            <textarea id="imgPrompt" placeholder="A glowing fox in a forest, cinematic"></textarea>
-            <div id="editOnly" style="display:none">
-              <label class="field" for="imgUrl">Source image URL (or upload)</label>
-              <input id="imgUrl" placeholder="https://… or use the file picker" />
-              <input type="file" id="imgFile" accept="image/*" style="margin-top:8px" />
-            </div>
-            <label class="field" for="imgSize">Size</label>
-            <select id="imgSize">
-              <option>512x512</option><option>640x640</option><option>768x768</option>
-              <option>832x448</option><option>448x832</option>
-            </select>
-            <div class="row" style="margin-top:14px">
-              <button class="btn green" id="genBtn">Generate</button>
-              <span id="imgStatus" class="muted"></span>
-            </div>
-            <div class="img-grid" id="imgGrid"></div>
+        <header class="topbar"><button class="icon-btn menu-btn" data-menu><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button><div class="conv-title">Image Generator & Editor</div></header>
+        <div class="page-scroll"><div class="card">
+          <label class="field" for="imgMode">Mode</label>
+          <select id="imgMode"><option value="text2img">Text to Image</option><option value="image-editor">Image to Image (edit)</option></select>
+          <label class="field" for="imgPrompt">Prompt</label>
+          <textarea id="imgPrompt" placeholder="A glowing fox in a forest, cinematic"></textarea>
+          <div id="editOnly" style="display:none">
+            <label class="field" for="imgUrl">Source image URL (or upload)</label>
+            <input id="imgUrl" placeholder="https://… or use the file picker" />
+            <input type="file" id="imgFile" accept="image/*" style="margin-top:8px" />
           </div>
-        </div>
+          <label class="field" for="imgSize">Size</label>
+          <select id="imgSize"><option>512x512</option><option>640x640</option><option>768x768</option><option>832x448</option><option>448x832</option></select>
+          <div class="row" style="margin-top:14px"><button class="btn green" id="genBtn">Generate</button><span id="imgStatus" class="muted"></span></div>
+          <div class="img-grid" id="imgGrid"></div>
+        </div></div>
       </section>
 
-      <!-- MODELS -->
       <section class="page" id="page-models">
-        <header class="topbar"><div class="conv-title">Models</div></header>
-        <div class="page-scroll">
-          <div class="card">
-            <div class="row between wrap" style="margin-bottom:10px">
-              <span class="muted" id="modelCount"></span>
-              <button class="btn sm" id="testAllBtn">Test all</button>
-            </div>
-            <table class="models">
-              <thead><tr><th>Model</th><th>Type</th><th>Context</th><th>Notes</th><th>Status</th><th></th></tr></thead>
-              <tbody id="modelsBody"></tbody>
-            </table>
-          </div>
-        </div>
+        <header class="topbar"><button class="icon-btn menu-btn" data-menu><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button><div class="conv-title">Models</div></header>
+        <div class="page-scroll"><div class="card">
+          <div class="row between wrap" style="margin-bottom:10px"><span class="muted" id="modelCount"></span><button class="btn sm" id="testAllBtn">Test all</button></div>
+          <table class="models"><thead><tr><th>Model</th><th>Type</th><th>Context</th><th>Notes</th><th>Status</th><th></th></tr></thead><tbody id="modelsBody"></tbody></table>
+        </div></div>
       </section>
 
-      <!-- KEYS -->
       <section class="page" id="page-keys">
-        <header class="topbar"><div class="conv-title">API Keys</div></header>
-        <div class="page-scroll">
-          <div class="card">
-            <p class="muted">Keys use the <b>tnxbd-</b> prefix. Generate one and use it from any CLI: <span class="kbd">Authorization: Bearer &lt;key&gt;</span></p>
-            <div class="row wrap" style="gap:10px">
-              <input id="keyName" placeholder="Key name (optional)" style="max-width:260px" />
-              <button class="btn" id="genKeyBtn">Generate key</button>
-            </div>
-            <label class="field">Your keys</label>
-            <div id="keysList"></div>
+        <header class="topbar"><button class="icon-btn menu-btn" data-menu><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button><div class="conv-title">API Keys</div></header>
+        <div class="page-scroll"><div class="card">
+          <p class="muted">Your site key (prefix <b>tnxbd-</b>). Admin keys (prefix <b>tnxbd-admin</b>) can list all keys via <span class="kbd">GET /api/v1/keys</span>.</p>
+          <div id="keysList"></div>
+          <div class="row wrap" style="gap:10px;margin-top:12px">
+            <input id="keyName" placeholder="Key name (optional)" style="max-width:240px" />
+            <button class="btn" id="genKeyBtn">Generate key</button>
           </div>
-        </div>
+        </div></div>
       </section>
 
-      <!-- DOCS -->
       <section class="page" id="page-docs">
-        <header class="topbar"><div class="conv-title">API Reference</div></header>
-        <div class="page-scroll">
-          <div class="card">
-            <p class="muted">OpenAI / OpenRouter compatible. All routes need <span class="kbd">Authorization: Bearer &lt;key&gt;</span> except <span class="kbd">GET /api/v1/models</span>.</p>
-            <table class="models">
-              <thead><tr><th>Method</th><th>Path</th><th>Body</th></tr></thead>
-              <tbody>
-                <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/chat/completions</span></td><td>OpenAI chat completions</td></tr>
-                <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/responses</span></td><td>Codex Responses API</td></tr>
-                <tr><td><span class="tag">GET</span></td><td><span class="code">/api/v1/models</span></td><td>OpenRouter-style model list</td></tr>
-                <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/v1/images/generations</span></td><td>{ prompt, size }</td></tr>
-                <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/v1/images/edits</span></td><td>{ prompt, image, size }</td></tr>
-                <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/keys</span></td><td>{ name } → new key</td></tr>
-              </tbody>
-            </table>
-            <div class="notice" style="margin-top:16px">
-              <b>Client config</b> — Type: <span class="kbd">OpenAI</span>, Name: <span class="kbd">TNXBD</span>, Base URL: <span class="code" id="baseUrl"></span>, Key: <span class="kbd">tnxbd-…</span>
-            </div>
-          </div>
-        </div>
+        <header class="topbar"><button class="icon-btn menu-btn" data-menu><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button><div class="conv-title">API Reference</div></header>
+        <div class="page-scroll"><div class="card">
+          <p class="muted">OpenAI / OpenRouter compatible. Base URL: <span class="code" id="baseUrl"></span>. All routes need <span class="kbd">Authorization: Bearer &lt;key&gt;</span> except <span class="kbd">GET /api/v1/models</span>.</p>
+          <table class="models"><thead><tr><th>Method</th><th>Path</th><th>Body</th></tr></thead><tbody>
+            <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/chat/completions</span></td><td>OpenAI chat completions</td></tr>
+            <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/responses</span></td><td>Codex Responses API</td></tr>
+            <tr><td><span class="tag">GET</span></td><td><span class="code">/api/v1/models</span></td><td>OpenRouter-style model list</td></tr>
+            <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/v1/images/generations</span></td><td>JSON or multipart: prompt(+size)</td></tr>
+            <tr><td><span class="tag img">POST</span></td><td><span class="code">/api/v1/images/edits</span></td><td>JSON or multipart: prompt+image</td></tr>
+            <tr><td><span class="tag">POST</span></td><td><span class="code">/api/v1/keys</span></td><td>create key (public)</td></tr>
+          </tbody></table>
+          <div class="notice" style="margin-top:16px"><b>Client config</b> — Type: <span class="kbd">OpenAI</span>, Name: <span class="kbd">TNXBD</span>, Base URL: <span class="code" id="baseUrl2"></span>, Key: <span class="kbd">tnxbd-…</span></div>
+        </div></div>
       </section>
     </div>
   </div>
